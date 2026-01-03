@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { supabase } from '@/lib/supabase';
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,16 +21,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // In a real application, you would:
-    // 1. Save to database
-    // 2. Send confirmation email
-    // 3. Add to email marketing service (Mailchimp, ConvertKit, etc.)
-    
-    // For now, we'll just return success
+    // Save to Supabase database
+    const { data, error } = await supabase
+      .from('subscribers')
+      .insert([
+        {
+          email,
+          subscribed_at: new Date().toISOString(),
+          status: 'active',
+          source: 'Newsletter'
+        }
+      ])
+      .select();
+
+    if (error) {
+      // Check for duplicate email (unique constraint violation)
+      if (error.code === '23505') {
+        return NextResponse.json(
+          { error: 'This email is already subscribed!' },
+          { status: 409 }
+        );
+      }
+
+      console.error('Supabase error:', error);
+      return NextResponse.json(
+        { error: 'Failed to subscribe. Please try again later.' },
+        { status: 500 }
+      );
+    }
+
     console.log('New subscriber:', email);
 
     return NextResponse.json(
-      { 
+      {
         message: 'Successfully subscribed!',
         email: email,
         subscribedAt: new Date().toISOString()
