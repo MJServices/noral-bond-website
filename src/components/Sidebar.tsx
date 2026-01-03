@@ -13,6 +13,13 @@ export default function Sidebar({ onComingSoon }: SidebarProps = {}) {
   const handleClick = (itemId: string) => {
     setActiveItem(itemId);
     setIsMobileMenuOpen(false); // Close mobile menu when item is clicked
+    
+    // Handle admin panel navigation
+    if (itemId === 'admin') {
+      window.open('/admin', '_blank');
+      return;
+    }
+    
     if (onComingSoon) {
       onComingSoon();
     }
