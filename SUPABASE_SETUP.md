@@ -1,189 +1,118 @@
 # NeuralBond Supabase Setup Guide
 
-## Prerequisites
-- A Supabase account (free tier available at https://supabase.com)
-- Node.js and npm installed
+This guide helps you set up your Supabase database.
 
-## Step 1: Create Supabase Project
+## 1. Existing Database Schema
 
-1. Go to https://supabase.com and sign up/login
-2. Click "New Project"
-3. Fill in project details:
-   - Project name: `neuralbond` (or your choice)
-   - Database password: (create a strong password)
-   - Region: Choose closest to your users
-4. Click "Create new project" and wait for setup to complete
+Your database already contains these tables. Verify they match this structure:
 
-## Step 2: Create Database Tables
-
-1. In your Supabase dashboard, go to **SQL Editor**
-2. Create the `subscribers` table by running this SQL:
+### Table: `subscribers`
 
 ```sql
-CREATE TABLE subscribers (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  subscribed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  status TEXT DEFAULT 'active',
-  source TEXT DEFAULT 'Newsletter'
+CREATE TABLE IF NOT EXISTS public.subscribers (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  email text NOT NULL UNIQUE,
+  subscribed_at timestamp with time zone DEFAULT now(),
+  status text DEFAULT 'active'::text,
+  source text DEFAULT 'Newsletter'::text,
+  CONSTRAINT subscribers_pkey PRIMARY KEY (id)
 );
-
--- Enable Row Level Security
-ALTER TABLE subscribers ENABLE ROW LEVEL SECURITY;
-
--- Allow anyone to insert (subscribe)
-CREATE POLICY "Allow public inserts" ON subscribers
-  FOR INSERT TO anon
-  WITH CHECK (true);
-
--- Allow reading subscriptions
-CREATE POLICY "Allow public reads" ON subscribers
-  FOR SELECT TO anon
-  USING (true);
 ```
 
-3. Create the `blog_posts` table by running this SQL:
+### Table: `blog_posts`
 
 ```sql
-CREATE TABLE blog_posts (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  excerpt TEXT NOT NULL,
-  content TEXT NOT NULL,
-  author TEXT NOT NULL,
-  author_bio TEXT,
-  author_image TEXT,
-  published_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  status TEXT DEFAULT 'published',
-  tags TEXT[] DEFAULT '{}',
-  category TEXT,
-  views TEXT DEFAULT '0',
-  likes INTEGER DEFAULT 0,
-  comments INTEGER DEFAULT 0,
-  read_time TEXT,
-  related_topics TEXT[] DEFAULT '{}',
-  key_takeaways TEXT[] DEFAULT '{}',
+CREATE TABLE IF NOT EXISTS public.blog_posts (
+  id text NOT NULL,
+  title text NOT NULL,
+  excerpt text NOT NULL,
+  content text NOT NULL,
+  author text NOT NULL,
+  author_bio text,
+  author_image text,
+  published_at timestamp with time zone DEFAULT now(),
+  status text DEFAULT 'published'::text,
+  tags ARRAY DEFAULT '{}'::text[],
+  category text,
+  views text DEFAULT '0'::text,
+  likes integer DEFAULT 0,
+  comments integer DEFAULT 0,
+  read_time text,
+  related_topics ARRAY DEFAULT '{}'::text[],
+  key_takeaways ARRAY DEFAULT '{}'::text[],
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT blog_posts_pkey PRIMARY KEY (id)
+);
+```
+
+---
+
+## 2. Updates Required: Dynamic Landing Page Content
+
+You need to create a new table `landing_page_content` to store the editable text for the homepage.
+
+### Create `landing_page_content` Table
+
+Run this SQL script in your Supabase SQL Editor to create the table and populate it with the default content.
+
+```sql
+-- Create the table
+CREATE TABLE public.landing_page_content (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  -- Hero Section
+  hero_heading TEXT DEFAULT 'Your Perfect AI Companion',
+  hero_subheading TEXT DEFAULT 'Experience deep emotional connection with an AI that learns, grows, and adapts to you. Explore, learn, and discover together in a safe, personalized environment.',
+  hero_button_chat_text TEXT DEFAULT 'Start Chatting',
+  hero_button_profile_text TEXT DEFAULT 'Create Profile',
+  hero_button_explore_text TEXT DEFAULT 'Explore Lessons',
+
+  -- Stats Section
+  stats_rating_value TEXT DEFAULT '4.9',
+  stats_rating_label TEXT DEFAULT 'User Rating',
+  stats_users_value TEXT DEFAULT '50k+',
+  stats_users_label TEXT DEFAULT 'Active Users',
+  stats_satisfaction_value TEXT DEFAULT '95%',
+  stats_satisfaction_label TEXT DEFAULT 'Satisfaction Rate',
+  stats_availability_value TEXT DEFAULT '24/7',
+  stats_availability_label TEXT DEFAULT 'Available',
+
+  -- Pricing Section
+  pricing_heading TEXT DEFAULT 'Choose Your Plan',
+  pricing_subheading TEXT DEFAULT 'Select the perfect plan for your AI companion journey. All yearly plans include exclusive discounts.',
+
+  -- Blog Section
+  blog_heading TEXT DEFAULT 'Latest Insights',
+  blog_subheading TEXT DEFAULT 'Discover the latest in AI technology, tips, and insights from our experts. Stay ahead of the curve with cutting-edge knowledge.',
+
+  -- Newsletter Section
+  newsletter_heading TEXT DEFAULT 'Stay in the Loop',
+  newsletter_subheading TEXT DEFAULT 'Join our newsletter to get the latest updates, AI tips, and exclusive offers delivered straight to your inbox.',
+
+  -- Footer
+  footer_text TEXT DEFAULT '© 2025 NeuralBond. All rights reserved.',
+
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Enable Row Level Security
-ALTER TABLE blog_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE landing_page_content ENABLE ROW LEVEL SECURITY;
 
--- Allow anyone to read published posts
-CREATE POLICY "Allow public reads for published posts" ON blog_posts
+-- Allow public read access
+CREATE POLICY "Allow public reads for landing content" ON landing_page_content
   FOR SELECT TO anon
-  USING (status = 'published');
+  USING (true);
+
+-- Insert the initial row (IMPORTANT: Only one row should exist)
+INSERT INTO landing_page_content (hero_heading) VALUES ('Your Perfect AI Companion');
 ```
 
-## Step 3: Get Your API Credentials
+## 3. Environment Variables
 
-1. In Supabase dashboard, go to **Settings** → **API**
-2. Copy the following values:
-   - **Project URL** (looks like: `https://xxxxx.supabase.co`)
-   - **anon public** key (under "Project API keys")
-
-## Step 4: Configure Environment Variables
-
-1. Create a `.env.local` file in your project root (if it doesn't exist)
-2. Add your Supabase credentials:
+Make sure your `.env.local` file contains your Supabase credentials:
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=your-project-url-here
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
+NEXT_PUBLIC_SUPABASE_URL=your-project-url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
 ```
-
-**Replace** `your-project-url-here` and `your-anon-key-here` with the values from Step 3.
-
-## Step 5: Add Sample Blog Posts (Optional)
-
-To populate your blog with sample content, run this SQL in the SQL Editor:
-
-```sql
-INSERT INTO blog_posts (id, title, excerpt, content, author, author_bio, author_image, published_at, status, tags, category, views, likes, comments, read_time, related_topics, key_takeaways)
-VALUES 
-(
-  '1',
-  'The Future of AI Companionship: Building Meaningful Connections',
-  'Explore how AI companions are revolutionizing personal relationships and emotional support in the digital age.',
-  'The landscape of human-AI interaction is rapidly evolving, and we''re witnessing the emergence of truly meaningful AI companionship. Unlike traditional chatbots, modern AI companions are designed to understand, learn, and adapt to individual personalities and needs.
-
-**The Evolution of AI Companionship**
-
-The journey from simple chatbots to sophisticated AI companions represents a quantum leap in technology. Early chatbots could only respond to specific keywords and phrases, but today''s AI companions can:
-
-- Understand context and nuance in conversations
-- Remember past interactions and build upon them
-- Recognize emotional states and respond appropriately
-- Learn from each interaction to become more personalized
-- Provide consistent support across different topics and situations
-
-**Benefits Beyond Simple Conversation**
-
-AI companions offer a wide range of benefits that extend far beyond basic conversation:
-
-**Emotional Support**: Available 24/7 to provide comfort during difficult times, celebrate successes, and offer a non-judgmental listening ear.
-
-**Learning and Development**: Help users develop new skills, practice languages, explore creative writing, or work through complex problems with patient guidance.
-
-**Creative Collaboration**: Serve as brainstorming partners for creative projects, offering fresh perspectives and helping overcome creative blocks.
-
-As we move forward, the key is maintaining the balance between technological advancement and authentic human connection. AI companions aren''t meant to replace human relationships but to enhance our capacity for connection and personal growth.',
-  'Dr. Sarah Chen',
-  'Dr. Sarah Chen is a leading researcher in AI and human-computer interaction at Stanford University.',
-  'SC',
-  NOW() - INTERVAL '7 days',
-  'published',
-  ARRAY['AI Technology', 'Relationships', 'Future Tech'],
-  'Technology',
-  '2.4k',
-  156,
-  23,
-  '8 min read',
-  ARRAY['Machine Learning', 'Psychology', 'Human-AI Interaction'],
-  ARRAY['AI companions use advanced NLP and emotional intelligence', 'They provide 24/7 emotional support and learning assistance', 'The goal is to enhance, not replace, human connections', 'Technology should amplify our humanity']
-);
-```
-
-You can add more blog posts by modifying the INSERT statement.
-
-## Step 6: Test Your Setup
-
-1. Start your development server:
-```bash
-npm run dev
-```
-
-2. Open http://localhost:3000
-
-3. Test the email subscription:
-   - Enter an email in the "Stay in Loop" section
-   - Check your Supabase dashboard → Table Editor → `subscribers` to see the entry
-
-4. Test blog posts:
-   - If you added sample data, you should see blog posts on the homepage
-   - If not, add a blog post via Supabase dashboard
-
-## Troubleshooting
-
-### "Failed to subscribe" error
-- Check that your `.env.local` file has the correct credentials
-- Verify the `subscribers` table exists in Supabase
-- Check browser console for detailed error messages
-
-### Blog posts not showing
-- Verify the `blog_posts` table exists
-- Check that posts have `status = 'published'`
-- Look for errors in browser console
-
-### Environment variables not working
-- Make sure `.env.local` is in the project root
-- Restart your development server after adding/changing env variables
-- Verify variable names start with `NEXT_PUBLIC_`
-
-## Next Steps
-
-- Add more blog posts through Supabase dashboard
-- Customize the blog post schema if needed
-- Set up email notifications for new subscribers (optional)
-- Add admin panel to manage blog posts (future enhancement)
