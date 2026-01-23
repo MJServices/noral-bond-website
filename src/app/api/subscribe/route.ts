@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase-admin';
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,8 +21,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Save to Supabase database
-    const { data, error } = await supabase
+    // Save to Supabase database using ADMIN client (Bypasses RLS)
+    const { data, error } = await supabaseAdmin
       .from('subscribers')
       .insert([
         {
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
 
       console.error('Supabase error:', error);
       return NextResponse.json(
-        { error: 'Failed to subscribe. Please try again later.' },
+        { error: `Error: ${error.message} (${error.code})` },
         { status: 500 }
       );
     }

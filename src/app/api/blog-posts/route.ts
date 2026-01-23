@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { createClient } from '@/lib/supabase-server';
 
 export async function GET() {
     try {
+        const supabase = await createClient();
+
         // Fetch published blog posts from Supabase
         const { data, error } = await supabase
             .from('blog_posts')
@@ -12,9 +14,10 @@ export async function GET() {
 
         if (error) {
             console.error('Supabase error:', error);
+            // If table doesn't exist or other error, return empty list instead of crashing
             return NextResponse.json(
-                { error: 'Failed to fetch blog posts' },
-                { status: 500 }
+                { posts: [] },
+                { status: 200 }
             );
         }
 
