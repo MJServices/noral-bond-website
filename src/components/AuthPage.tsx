@@ -127,7 +127,7 @@ export default function AuthPage({ onComplete }: AuthPageProps) {
         <div className="fixed inset-0 z-[100] bg-[#0a0a0a] overflow-y-auto">
             <div className="min-h-full w-full flex items-center justify-center p-4">
                 {/* Dynamic Background */}
-                <div className="absolute inset-0 overflow-hidden">
+                <div className="fixed inset-0 overflow-hidden">
                     <video
                         autoPlay
                         muted

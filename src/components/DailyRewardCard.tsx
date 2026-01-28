@@ -7,6 +7,7 @@ import { Sparkles, Check, Clock } from 'lucide-react';
 export default function DailyRewardCard() {
     const { stats, claimDaily, refreshStats } = useXP();
     const [claiming, setClaiming] = useState(false);
+    const [hasJustClaimed, setHasJustClaimed] = useState(false);
     const [message, setMessage] = useState('');
 
     // Calculate if claimed today
@@ -17,7 +18,13 @@ export default function DailyRewardCard() {
         lastClaimDate.getMonth() === today.getMonth() &&
         lastClaimDate.getFullYear() === today.getFullYear();
 
-    const handleClaim = async () => {
+    const showClaimed = isClaimedToday || hasJustClaimed;
+
+    const handleClaim = async (e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (claiming) return;
+
         setClaiming(true);
         const result = await claimDaily();
         setClaiming(false);
@@ -25,6 +32,8 @@ export default function DailyRewardCard() {
         if (result && result.success === false) {
             // Already claimed (shouldn't happen if button disabled) or error
             setMessage(result.message || 'Error claiming.');
+        } else {
+            setHasJustClaimed(true);
         }
     };
 
@@ -66,16 +75,16 @@ export default function DailyRewardCard() {
 
                 {/* Right Side: Action */}
                 <div className="flex flex-col items-center md:items-end gap-2">
-                    {isClaimedToday ? (
+                    {showClaimed ? (
                         <button disabled className="flex items-center gap-2 bg-white/5 border border-white/5 text-white/50 px-6 py-2 rounded-lg font-medium cursor-not-allowed">
                             <Check className="w-4 h-4" />
                             Claimed
                         </button>
                     ) : (
-                        <button
+                        <div
+                            role="button"
                             onClick={handleClaim}
-                            disabled={claiming}
-                            className="flex items-center gap-2 bg-gradient-to-r from-[#FFD700] to-[#FFA500] text-black px-6 py-2 rounded-lg font-bold hover:brightness-110 transition-all shadow-lg shadow-orange-500/10 disabled:opacity-70 disabled:cursor-not-allowed"
+                            className={`flex items-center gap-2 bg-gradient-to-r from-[#FFD700] to-[#FFA500] text-black px-6 py-2 rounded-lg font-bold hover:brightness-110 transition-all shadow-lg shadow-orange-500/10 cursor-pointer ${claiming ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                             {claiming ? 'Claiming...' : (
                                 <>
@@ -83,13 +92,24 @@ export default function DailyRewardCard() {
                                     Claim +{nextRewardValue} XP
                                 </>
                             )}
-                        </button>
+                        </div>
                     )}
 
-                    {isClaimedToday && (
+                    {showClaimed && (
                         <div className="flex items-center gap-1 text-xs text-white/40">
                             <Clock className="w-3 h-3" />
                             <span>Next reward in 24h</span>
+                        </div>
+                    )}
+                    {showClaimed && (
+                        <div className="flex items-center gap-1 text-xs text-white/40">
+                            <Clock className="w-3 h-3" />
+                            <span>Next reward in 24h</span>
+                        </div>
+                    )}
+                    {message && (
+                        <div className="text-red-400 text-xs mt-1 text-center animate-pulse">
+                            {message}
                         </div>
                     )}
                 </div>

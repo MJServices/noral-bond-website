@@ -25,7 +25,7 @@ import { useXP } from '@/hooks/useXP';
 
 export default function ProgressPage() {
     const { user } = useAuth();
-    const { stats: xpStats } = useXP(); // Use the global XP hook
+    const { stats: xpStats, refreshStats } = useXP(); // Use the global XP hook
     const [activeTab, setActiveTab] = useState('overview');
     const [isLoading, setIsLoading] = useState(true);
 
@@ -50,39 +50,33 @@ export default function ProgressPage() {
     const [missions, setMissions] = useState<any[]>([]);
 
     useEffect(() => {
-        // Sync props from hook to local state (or just use hook directly in render, 
-        //   but we need to merge with other stats fetched here)
-        // Actually, let's calculate level progress here based on XP from hook
+        refreshStats();
+    }, [refreshStats]);
 
-        // Level Calc Logic (match SQL): 
-        // 1-6: 0-99 (1), 100-299 (2), 300-599 (3), 600-999 (4), 1000-1499 (5), 1500-2099 (6)
-        // 7+: 2100 + 300 per level.
-        // We need "Next Level XP" and "Current Level Progress" relative to START of that level.
+    // Level Calc Logic (match SQL) - Moved to top level for render access
+    const currentXP = xpStats.xp;
+    const currentLevel = xpStats.level;
+    let startOfLevelXP = 0;
+    let nextLevelXPThreshold = 100;
 
-        const currentXP = xpStats.xp;
-        const currentLevel = xpStats.level;
-        let startOfLevelXP = 0;
-        let nextLevelXPThreshold = 100;
+    if (currentLevel === 1) { startOfLevelXP = 0; nextLevelXPThreshold = 100; }
+    else if (currentLevel === 2) { startOfLevelXP = 100; nextLevelXPThreshold = 300; }
+    else if (currentLevel === 3) { startOfLevelXP = 300; nextLevelXPThreshold = 600; }
+    else if (currentLevel === 4) { startOfLevelXP = 600; nextLevelXPThreshold = 1000; }
+    else if (currentLevel === 5) { startOfLevelXP = 1000; nextLevelXPThreshold = 1500; }
+    else if (currentLevel === 6) { startOfLevelXP = 1500; nextLevelXPThreshold = 2100; }
+    else {
+        startOfLevelXP = 2100 + (currentLevel - 7) * 300;
+        nextLevelXPThreshold = startOfLevelXP + 300;
+    }
 
-        // Replicate SQL logic for display
-        if (currentLevel === 1) { startOfLevelXP = 0; nextLevelXPThreshold = 100; }
-        else if (currentLevel === 2) { startOfLevelXP = 100; nextLevelXPThreshold = 300; }
-        else if (currentLevel === 3) { startOfLevelXP = 300; nextLevelXPThreshold = 600; }
-        else if (currentLevel === 4) { startOfLevelXP = 600; nextLevelXPThreshold = 1000; }
-        else if (currentLevel === 5) { startOfLevelXP = 1000; nextLevelXPThreshold = 1500; }
-        else if (currentLevel === 6) { startOfLevelXP = 1500; nextLevelXPThreshold = 2100; }
-        else {
-            // Lvl 7 starts at 2100. Each level is 300.
-            // Level N starts at: 2100 + (N-7)*300
-            startOfLevelXP = 2100 + (currentLevel - 7) * 300;
-            nextLevelXPThreshold = startOfLevelXP + 300;
-        }
+    const xpNeededForNext = nextLevelXPThreshold - currentXP;
+    const progressInLevel = Math.max(0, currentXP - startOfLevelXP);
+    const totalLevelSpan = nextLevelXPThreshold - startOfLevelXP;
+    const progressPercent = Math.min(100, Math.max(0, (progressInLevel / totalLevelSpan) * 100));
 
-        const xpNeededForNext = nextLevelXPThreshold - currentXP;
-        const progressInLevel = currentXP - startOfLevelXP;
-        const totalLevelSpan = nextLevelXPThreshold - startOfLevelXP;
-        const progressPercent = Math.min(100, Math.max(0, (progressInLevel / totalLevelSpan) * 100));
-
+    useEffect(() => {
+        // Sync calculated values to local state
         setStats(prev => ({
             ...prev,
             level: currentLevel,
@@ -91,9 +85,7 @@ export default function ProgressPage() {
             nextLevelXP: xpNeededForNext,
             xpProgress: progressPercent
         }));
-
-    }, [xpStats]);
-
+    }, [xpStats, currentXP, currentLevel, xpNeededForNext, progressPercent]);
     useEffect(() => {
         if (!user?.id) return;
 
@@ -269,7 +261,7 @@ export default function ProgressPage() {
         setIsLoading(true);
         try {
             // Update profile: add XP and set claim date
-            const { error } = await supabase.rpc('increment_xp', { amount: 500 });
+            // const { error } = await supabase.rpc('increment_xp', { amount: 500 });
 
             // Note: Since we don't have an RPC for this specifically yet, we might need a direct update
             // Using direct update for now
@@ -380,7 +372,9 @@ export default function ProgressPage() {
                             <div className="mb-2">
                                 <div className="flex justify-between text-xs text-gray-400 mb-2">
                                     <span>Progress to Level {stats.level + 1}</span>
-                                    <span>{Math.round(stats.xpProgress)}%</span>
+                                    {/* Re-calculate for display or add to state. Using simple calc here since vars are local to effect. */}
+                                    {/* Display relative progress in the level. */}
+                                    <span>{Math.round(stats.xpProgress)}% <span className="text-gray-500 font-normal">({stats.totalXP - startOfLevelXP} / {totalLevelSpan} XP in this level)</span></span>
                                 </div>
                                 <div className="h-2 bg-[#0E1113] rounded-full overflow-hidden">
                                     <div
@@ -743,7 +737,7 @@ function MissionRow({ title, description, xp, progress, target, completed, claim
                     <p className="text-xs text-gray-500">{description}</p>
                 </div>
                 <div className={`px-3 py-1 rounded-lg border text-xs font-mono 
-                    ${completed ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/5 text-gray-300 border-white/10'}`}>
+                        ${completed ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/5 text-gray-300 border-white/10'}`}>
                     {completed ? 'Completed' : `+${xp} XP`}
                 </div>
             </div>
