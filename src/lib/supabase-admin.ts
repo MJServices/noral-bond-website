@@ -7,10 +7,14 @@ const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
 if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Missing Supabase URL or Service Role Key');
+    console.warn('Missing Supabase URL or Service Role Key. Admin client will not work.');
 }
 
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+// Fallback to avoid build errors if keys are missing
+const url = supabaseUrl || 'https://placeholder.supabase.co';
+const key = supabaseServiceKey || 'placeholder-key';
+
+export const supabaseAdmin = createClient(url, key, {
     auth: {
         autoRefreshToken: false,
         persistSession: false
