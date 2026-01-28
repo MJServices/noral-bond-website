@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { loadStripe } from '@stripe/stripe-js';
 import Sidebar from "@/components/Sidebar";
 import ChatInterface from "@/components/ChatInterface";
 import ProfilePage from "@/components/ProfilePage";
@@ -8,17 +9,68 @@ import ProgressPage from "@/components/ProgressPage";
 import LearningCenter from "@/components/LearningCenter";
 import SettingsPage from "@/components/SettingsPage";
 import AuthPage from "@/components/AuthPage";
+import DailyRewardCard from "@/components/DailyRewardCard";
 import ReactMarkdown from 'react-markdown';
 
-import Navbar from "@/components/Navbar";
 import { useAuth } from "@/context/AuthContext";
 
 export default function Home() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const [showComingSoon, setShowComingSoon] = useState(false);
   const [selectedBlogPost, setSelectedBlogPost] = useState<any>(null);
   const [currentView, setCurrentView] = useState('home');
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Check for payment success/failure in URL
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('payment') === 'success') {
+      // Auto-verify payment since webhooks might fail on localhost
+      fetch('/api/verify-payment', { method: 'POST' })
+        .then(res => res.json())
+        .then(data => {
+          if (data.success) {
+            alert(`Payment verified! You are now on the ${data.tier} plan.`);
+          } else {
+            console.warn('Verification fallback:', data.message);
+          }
+          setCurrentView('settings');
+          window.history.replaceState({}, '', '/');
+        })
+        .catch(err => {
+          console.error('Verification error:', err);
+          setCurrentView('settings');
+          window.history.replaceState({}, '', '/'); // Ensure URL is cleaned even on error
+        });
+
+    } else if (params.get('payment') === 'cancelled') {
+      alert('Payment cancelled.');
+      window.history.replaceState({}, '', '/');
+    }
+  }, []);
+
+  const handleCheckout = async (priceId: string, priceName: string) => {
+    setCheckoutLoading(priceId);
+    try {
+      const res = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ priceId, priceName }),
+      });
+
+      const { url } = await res.json();
+      if (url) {
+        window.location.href = url;
+      } else {
+        throw new Error('No checkout URL returned');
+      }
+    } catch (error) {
+      console.error('Checkout failed', error);
+      alert('Checkout failed. Please try again.');
+    } finally {
+      setCheckoutLoading(null);
+    }
+  };
 
   const handleComingSoon = () => {
     setShowComingSoon(true);
@@ -39,8 +91,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen relative overflow-x-hidden">
-      <Navbar onMenuClick={() => setIsMobileMenuOpen(true)} />
-
       {/* Video Background - Responsive and optimized for mobile */}
       <div className="fixed inset-0 w-full h-full z-0">
         <video
@@ -69,7 +119,7 @@ export default function Home() {
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[400px] h-[400px] md:w-[800px] md:h-[800px] bg-gradient-radial from-[#8459E2]/10 via-transparent to-transparent rounded-full animate-pulse-glow"></div>
 
         {/* Subtle animated particles over video - Fewer on mobile */}
-        {/* <FloatingParticles />  -- Commenting out if not imported, or assuming it is imported below? It was in original code. */}
+        <FloatingParticles />
       </div>
       {/* Coming Soon Modal */}
       {showComingSoon && (
@@ -107,12 +157,10 @@ export default function Home() {
         onComingSoon={handleComingSoon}
         activeItem={currentView}
         onNavigate={setCurrentView}
-        isOpen={isMobileMenuOpen}
-        onClose={() => setIsMobileMenuOpen(false)}
       />
 
       {/* Main Content - Responsive offset by sidebar width */}
-      <div className="ml-0 md:ml-18 relative z-10 min-h-screen pt-16">
+      <div className="ml-0 md:ml-18 relative z-10 min-h-screen">
 
         {currentView === 'chat' ? (
           <ChatInterface />
@@ -126,7 +174,11 @@ export default function Home() {
           <SettingsPage />
         ) : (
           <>
-            {/* Header - Removed as Navbar replaces it */}
+            {/* Header - Responsive positioning */}
+            <header className="relative z-30 flex justify-end items-center px-4 md:px-6 lg:px-12 py-4 md:py-6">
+              {/* Auth Buttons - Responsive sizing */}
+
+            </header>
 
             {/* Main Content - Fully responsive */}
             <main className="relative z-30 flex flex-col items-center justify-center min-h-[calc(100vh-80px)] md:min-h-[calc(100vh-120px)] px-4 md:px-6">
@@ -134,6 +186,11 @@ export default function Home() {
               <div className="flex items-center gap-2 md:gap-3 bg-black/20 border border-white/10 rounded-full px-4 md:px-6 py-2 md:py-3 backdrop-blur-sm mb-6 md:mb-8">
                 <div className="w-2 h-2 md:w-3 md:h-3 bg-[#4ADE80] rounded-full"></div>
                 <span className="text-white text-xs md:text-sm font-inter">AI System Online</span>
+              </div>
+
+              {/* Daily Reward Card */}
+              <div className="w-full max-w-xl mb-8">
+                <DailyRewardCard />
               </div>
 
               {/* Hero Icon - Responsive sizing */}
@@ -261,10 +318,13 @@ export default function Home() {
                       <p className="text-sm md:text-base text-[#D0D0D0]">Perfect for getting started</p>
                     </div>
                     <button
-                      onClick={handleComingSoon}
-                      className="w-full bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 hover:opacity-90 transition-opacity text-sm md:text-base"
+                      disabled={!profile?.subscription_tier || profile.subscription_tier === 'free'}
+                      className={`w-full py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 transition-opacity text-sm md:text-base ${!profile?.subscription_tier || profile.subscription_tier === 'free'
+                        ? 'bg-white/10 text-white/50 cursor-default'
+                        : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
+                        }`}
                     >
-                      Get Started
+                      {(!profile?.subscription_tier || profile.subscription_tier === 'free') ? 'Current Plan' : 'Get Started'}
                     </button>
                     <ul className="space-y-2 md:space-y-3 text-sm md:text-base text-[#D0D0D0]">
                       <li className="flex items-center gap-3">
@@ -315,10 +375,16 @@ export default function Home() {
                       <p className="text-sm md:text-base text-[#D0D0D0]">USD / year</p>
                     </div>
                     <button
-                      onClick={handleComingSoon}
-                      className="w-full bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 hover:opacity-90 transition-opacity text-sm md:text-base"
+                      onClick={() => handleCheckout('price_1SuAIUC1FHouzqEPNqlqfMP0', 'Standard')}
+                      disabled={checkoutLoading === 'price_1SuAIUC1FHouzqEPNqlqfMP0' || profile?.subscription_tier === 'standard'}
+                      className={`w-full py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 transition-opacity text-sm md:text-base disabled:opacity-50 ${profile?.subscription_tier === 'standard'
+                        ? 'bg-white/10 text-white/50 cursor-default'
+                        : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
+                        }`}
                     >
-                      Choose Standard
+                      {profile?.subscription_tier === 'standard'
+                        ? 'Current Plan'
+                        : checkoutLoading === 'price_1SuAIUC1FHouzqEPNqlqfMP0' ? 'Processing...' : 'Choose Standard'}
                     </button>
                     <ul className="space-y-2 md:space-y-3 text-sm md:text-base text-[#D0D0D0]">
                       <li className="flex items-center gap-3">
@@ -364,10 +430,16 @@ export default function Home() {
                       <p className="text-sm md:text-base text-[#D0D0D0]">USD / year</p>
                     </div>
                     <button
-                      onClick={handleComingSoon}
-                      className="w-full bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 hover:opacity-90 transition-opacity text-sm md:text-base"
+                      onClick={() => handleCheckout('price_1SuAIVC1FHouzqEP7qmGQ0B9', 'Premium')}
+                      disabled={checkoutLoading === 'price_1SuAIVC1FHouzqEP7qmGQ0B9' || profile?.subscription_tier === 'premium'}
+                      className={`w-full py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 transition-opacity text-sm md:text-base disabled:opacity-50 ${profile?.subscription_tier === 'premium'
+                          ? 'bg-white/10 text-white/50 cursor-default'
+                          : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
+                        }`}
                     >
-                      Choose Premium
+                      {profile?.subscription_tier === 'premium'
+                        ? 'Current Plan'
+                        : checkoutLoading === 'price_1SuAIVC1FHouzqEP7qmGQ0B9' ? 'Processing...' : 'Choose Premium'}
                     </button>
                     <ul className="space-y-2 md:space-y-3 text-sm md:text-base text-[#D0D0D0]">
                       <li className="flex items-center gap-3">

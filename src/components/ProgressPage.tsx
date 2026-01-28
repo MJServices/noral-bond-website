@@ -21,64 +21,147 @@ import {
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
+import { useXP } from '@/hooks/useXP';
 
 export default function ProgressPage() {
     const { user } = useAuth();
+    const { stats: xpStats } = useXP(); // Use the global XP hook
     const [activeTab, setActiveTab] = useState('overview');
     const [isLoading, setIsLoading] = useState(true);
 
     const [stats, setStats] = useState({
-        level: 1,
-        totalXP: 0,
-        nextLevelXP: 1000,
-        xpProgress: 0,
+        level: xpStats.level,
+        totalXP: xpStats.xp,
+        nextLevelXP: 0, // Calculated below
+        xpProgress: 0, // Calculated below
         dailyXP: 0,
-        streak: 0,
+        streak: xpStats.streak,
         bondScore: 0,
         messagesSent: 0,
         achievementsUnlocked: 0,
         totalAchievements: 5,
         dailyMissionsComplete: 0,
         weeklyActiveDays: 0,
-        weeklyBonusClaimed: false
+        weeklyBonusClaimed: false,
+        chartData: [] as any[]
     });
 
     const [achievements, setAchievements] = useState<any[]>([]);
+    const [missions, setMissions] = useState<any[]>([]);
+
+    useEffect(() => {
+        // Sync props from hook to local state (or just use hook directly in render, 
+        //   but we need to merge with other stats fetched here)
+        // Actually, let's calculate level progress here based on XP from hook
+
+        // Level Calc Logic (match SQL): 
+        // 1-6: 0-99 (1), 100-299 (2), 300-599 (3), 600-999 (4), 1000-1499 (5), 1500-2099 (6)
+        // 7+: 2100 + 300 per level.
+        // We need "Next Level XP" and "Current Level Progress" relative to START of that level.
+
+        const currentXP = xpStats.xp;
+        const currentLevel = xpStats.level;
+        let startOfLevelXP = 0;
+        let nextLevelXPThreshold = 100;
+
+        // Replicate SQL logic for display
+        if (currentLevel === 1) { startOfLevelXP = 0; nextLevelXPThreshold = 100; }
+        else if (currentLevel === 2) { startOfLevelXP = 100; nextLevelXPThreshold = 300; }
+        else if (currentLevel === 3) { startOfLevelXP = 300; nextLevelXPThreshold = 600; }
+        else if (currentLevel === 4) { startOfLevelXP = 600; nextLevelXPThreshold = 1000; }
+        else if (currentLevel === 5) { startOfLevelXP = 1000; nextLevelXPThreshold = 1500; }
+        else if (currentLevel === 6) { startOfLevelXP = 1500; nextLevelXPThreshold = 2100; }
+        else {
+            // Lvl 7 starts at 2100. Each level is 300.
+            // Level N starts at: 2100 + (N-7)*300
+            startOfLevelXP = 2100 + (currentLevel - 7) * 300;
+            nextLevelXPThreshold = startOfLevelXP + 300;
+        }
+
+        const xpNeededForNext = nextLevelXPThreshold - currentXP;
+        const progressInLevel = currentXP - startOfLevelXP;
+        const totalLevelSpan = nextLevelXPThreshold - startOfLevelXP;
+        const progressPercent = Math.min(100, Math.max(0, (progressInLevel / totalLevelSpan) * 100));
+
+        setStats(prev => ({
+            ...prev,
+            level: currentLevel,
+            totalXP: currentXP,
+            streak: xpStats.streak,
+            nextLevelXP: xpNeededForNext,
+            xpProgress: progressPercent
+        }));
+
+    }, [xpStats]);
 
     useEffect(() => {
         if (!user?.id) return;
 
-        async function fetchProgress() {
+        async function fetchOtherStats() {
             try {
-                // 1. Fetch Profile Stats
+                // Fetch Profile Stats (excluding XP which we get from hook)
                 const { data: profile } = await supabase
                     .from('profiles')
-                    .select('level, total_xp, bond_score, current_streak, conversations_count, last_weekly_bonus_claimed_at')
+                    .select('bond_score, conversations_count, last_weekly_bonus_claimed_at')
                     .eq('id', user!.id)
                     .maybeSingle();
 
-                // 2. Fetch User Daily Activity for today
+                // ... (Keep existing daily activity logic) ...
                 const today = new Date();
-                const todayStr = today.toISOString().split('T')[0];
-                const { data: dailyActivity } = await supabase
+                const { data: dailyActivityData } = await supabase
                     .from('user_daily_activity')
                     .select('xp_earned')
                     .eq('user_id', user!.id)
-                    .eq('activity_date', todayStr)
-                    .maybeSingle();
+                    .order('activity_date', { ascending: false })
+                    .limit(1);
+                const dailyActivity = dailyActivityData?.[0];
 
-                // Fetch activity for last 7 days for Weekly Bonus
+                // Fetch activity for last 7 days for Weekly Bonus and Chart
                 const sevenDaysAgo = new Date();
-                sevenDaysAgo.setDate(today.getDate() - 6);
+                sevenDaysAgo.setDate(today.getDate() - 6); // Last 7 days including today
                 const sevenDaysAgoStr = sevenDaysAgo.toISOString().split('T')[0];
 
-                const { count: activeDaysCount } = await supabase
+                const { data: weeklyActivity, count: activeDaysCount } = await supabase
                     .from('user_daily_activity')
-                    .select('*', { count: 'exact', head: true })
+                    .select('activity_date, xp_earned', { count: 'exact' })
                     .eq('user_id', user!.id)
-                    .gte('activity_date', sevenDaysAgoStr);
+                    .gte('activity_date', sevenDaysAgoStr); // Fetch >= 7 days ago
 
-                // Check if bonus was claimed in the last 7 days
+                // Generate Chart Data (Last 7 Days dynamic)
+                const daysMap = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const weekData: { day: string; val: number; active: boolean; date: string }[] = [];
+
+                // Helper to format date as YYYY-MM-DD local
+                const formatDate = (date: Date) => {
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    return `${year}-${month}-${day}`;
+                };
+
+                // Generate the last 7 days array
+                for (let i = 6; i >= 0; i--) {
+                    const d = new Date();
+                    d.setDate(today.getDate() - i);
+                    const dateStr = formatDate(d);
+                    const dayLabel = daysMap[d.getDay()];
+
+                    // Find activity for this day
+                    // Note: Date strings from DB might be UTC or Local. 
+                    // Usually simple date strings (YYYY-MM-DD) compare fine if we stick to string comparison.
+                    const activity = weeklyActivity?.find(a => a.activity_date === dateStr);
+                    const val = activity?.xp_earned || 0;
+
+                    weekData.push({
+                        day: dayLabel,
+                        val: val,
+                        active: val > 0,
+                        date: dateStr // helpful for debugging
+                    });
+                }
+
+                // Update local 'stats' state with weeklyBonus data as before...
+
                 let bonusClaimedRecently = false;
                 if (profile?.last_weekly_bonus_claimed_at) {
                     const lastClaimDate = new Date(profile.last_weekly_bonus_claimed_at);
@@ -87,39 +170,29 @@ export default function ProgressPage() {
                     }
                 }
 
-                // 3. Fetch Achievements
-                const { data: userAchievements, count: unlockedCount } = await supabase
+                // Achievement Counts
+                const { count: unlockedCount } = await supabase
                     .from('user_achievements')
-                    .select('achievement_id, unlocked_at, achievements(title, description, xp_reward)', { count: 'exact' })
+                    .select('achievement_id', { count: 'exact', head: true })
                     .eq('user_id', user!.id);
 
-                const { count: totalAchievementsCount } = await supabase
-                    .from('achievements')
-                    .select('*', { count: 'exact', head: true });
-
-                // Calculate calculations
-                const currentLevel = profile?.level || 1;
-                const totalXP = profile?.total_xp || 0;
-                const xpPerLevel = 1000;
-                const prevLevelThreshold = (currentLevel - 1) * 1000;
-                const currentLevelProgress = totalXP - prevLevelThreshold;
-                const progressPercent = Math.min(100, Math.max(0, (currentLevelProgress / xpPerLevel) * 100));
-
-                setStats({
-                    level: currentLevel,
-                    totalXP: totalXP,
-                    nextLevelXP: xpPerLevel - currentLevelProgress,
-                    xpProgress: progressPercent,
+                // Update stats
+                setStats(prev => ({
+                    ...prev,
                     dailyXP: dailyActivity?.xp_earned || 0,
-                    streak: profile?.current_streak || 0,
                     bondScore: profile?.bond_score || 0,
                     messagesSent: profile?.conversations_count || 0,
                     achievementsUnlocked: unlockedCount || 0,
-                    totalAchievements: totalAchievementsCount || 5,
-                    dailyMissionsComplete: 0,
                     weeklyActiveDays: activeDaysCount || 0,
-                    weeklyBonusClaimed: bonusClaimedRecently
-                });
+                    weeklyBonusClaimed: bonusClaimedRecently,
+                    chartData: weekData // Add to state
+                }));
+
+                // Fetch Achievements List
+                const { data: userAchievements } = await supabase
+                    .from('user_achievements')
+                    .select('achievement_id, achievements(title, description, xp_reward)')
+                    .eq('user_id', user!.id);
 
                 if (userAchievements) {
                     setAchievements(userAchievements.map((ua: any) => ({
@@ -138,11 +211,61 @@ export default function ProgressPage() {
             }
         }
 
-        fetchProgress();
+        fetchOtherStats();
     }, [user?.id]);
 
+    // Fetch Missions
+    useEffect(() => {
+        if (!user) return;
+        async function fetchMissions() {
+            try {
+                // Get definitions
+                const { data: allMissions } = await supabase
+                    .from('missions')
+                    .select('*');
+
+                // Get user progress (fetch all recent to handle timezone mismatches)
+                if (!user) return;
+
+                const { data: userProgress } = await supabase
+                    .from('user_missions')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('mission_date', { ascending: false }); // Get latest first
+
+                if (allMissions) {
+                    // Merge - find the latest progress for each mission
+                    const merged = allMissions.map(m => {
+                        // Since we ordered by date desc, the first match is the latest
+                        const prog = userProgress?.find(up => up.mission_id === m.id);
+                        return {
+                            ...m,
+                            progress: prog?.progress || 0,
+                            completed: prog?.completed || false,
+                            claimed: prog?.claimed || false
+                        };
+                    });
+                    setMissions(merged);
+
+                    // Update Stats with Mission Data
+                    const completedCount = merged.filter(m => m.completed).length;
+                    const totalMissions = merged.length;
+
+                    setStats(prev => ({
+                        ...prev,
+                        dailyMissionsComplete: completedCount,
+                        totalDailyMissions: totalMissions // We might need to add this property to stats state if not present, checking...
+                    }));
+                }
+            } catch (e) {
+                console.error('Error fetching missions', e);
+            }
+        }
+        fetchMissions();
+    }, [user?.id]); // Re-fetch when user changes
+
     const claimWeeklyBonus = async () => {
-        if (isLoading || stats.weeklyActiveDays < 7 || stats.weeklyBonusClaimed) return;
+        if (isLoading || stats.weeklyActiveDays < 7 || stats.weeklyBonusClaimed || !user?.id) return;
         setIsLoading(true);
         try {
             // Update profile: add XP and set claim date
@@ -158,7 +281,7 @@ export default function ProgressPage() {
                     total_xp: stats.totalXP + 500,
                     last_weekly_bonus_claimed_at: now
                 })
-                .eq('id', user!.id);
+                .eq('id', user.id);
 
             if (updateError) throw updateError;
 
@@ -433,7 +556,7 @@ export default function ProgressPage() {
 
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
                                 <div className="text-center">
-                                    <div className="text-2xl font-bold text-white mb-1">0/3</div>
+                                    <div className="text-2xl font-bold text-white mb-1">{stats.dailyMissionsComplete}/{missions.length || 3}</div>
                                     <div className="text-xs text-gray-400 font-medium">Daily Missions</div>
                                 </div>
                                 <div className="text-center border-l border-white/5 md:border-l-0 border-t md:border-t-0 pt-4 md:pt-0"> {/* Border handling for mobile */}
@@ -450,10 +573,13 @@ export default function ProgressPage() {
                             <div className="mb-8 relative">
                                 <div className="flex justify-between text-xs text-gray-400 mb-2">
                                     <span>Daily Progress</span>
-                                    <span>0%</span>
+                                    <span>{Math.round((stats.dailyMissionsComplete / (missions.length || 1)) * 100)}%</span>
                                 </div>
                                 <div className="h-2 bg-[#2A2D31] rounded-full overflow-hidden">
-                                    <div className="h-full w-0 bg-[#2A2D31]" />
+                                    <div
+                                        className="h-full bg-gradient-to-r from-[#8459E2] to-[#EC4899] transition-all duration-500"
+                                        style={{ width: `${Math.round((stats.dailyMissionsComplete / (missions.length || 1)) * 100)}%` }}
+                                    />
                                 </div>
                             </div>
 
@@ -466,8 +592,25 @@ export default function ProgressPage() {
 
                         {/* Available Missions Header */}
                         <div>
-                            <h3 className="text-lg font-bold text-white">Available Missions</h3>
-                            <p className="text-sm text-gray-500 mt-2">Coming soon...</p>
+                            <h3 className="text-lg font-bold text-white mb-4">Available Missions</h3>
+                            <div className="space-y-4">
+                                {missions.length > 0 ? (
+                                    missions.map((m) => (
+                                        <MissionRow
+                                            key={m.id}
+                                            title={m.title}
+                                            description={m.description}
+                                            xp={m.xp_reward}
+                                            progress={m.progress}
+                                            target={m.target_value}
+                                            completed={m.completed}
+                                            claimed={m.claimed}
+                                        />
+                                    ))
+                                ) : (
+                                    <p className="text-sm text-gray-500">No missions available today.</p>
+                                )}
+                            </div>
                         </div>
                     </div>
                 )}
@@ -482,15 +625,15 @@ export default function ProgressPage() {
                             </p>
 
                             <div className="grid grid-cols-7 gap-2 md:gap-4 items-end h-40"> {/* Fixed height for bars to grow from bottom */}
-                                {[
+                                {(stats.chartData.length > 0 ? stats.chartData : [
                                     { day: 'Mon', val: 0, active: false },
                                     { day: 'Tue', val: 0, active: false },
-                                    { day: 'Wed', val: stats.dailyXP, active: stats.dailyXP > 0 },
+                                    { day: 'Wed', val: 0, active: false },
                                     { day: 'Thu', val: 0, active: false },
                                     { day: 'Fri', val: 0, active: false },
                                     { day: 'Sat', val: 0, active: false },
                                     { day: 'Sun', val: 0, active: false },
-                                ].map((item, i) => (
+                                ]).map((item, i) => (
                                     <div key={i} className="flex flex-col items-center gap-2 group">
                                         {/* Bar */}
                                         <div className="w-full h-24 flex items-end justify-center">
@@ -584,6 +727,37 @@ function AchievementRow({ title, description, xp }: any) {
             </div>
             <div className="px-3 py-1 rounded-lg bg-white/5 border border-white/10 text-xs font-mono text-gray-300">
                 {xp}
+            </div>
+        </div>
+    )
+}
+
+function MissionRow({ title, description, xp, progress, target, completed, claimed }: any) {
+    const percent = Math.min(100, Math.round((progress / target) * 100));
+
+    return (
+        <div className="p-4 rounded-xl bg-[#0E1113]/50 border border-white/5 hover:bg-[#0E1113] transition-colors">
+            <div className="flex items-center justify-between mb-3">
+                <div>
+                    <h4 className="font-bold text-white mb-0.5">{title}</h4>
+                    <p className="text-xs text-gray-500">{description}</p>
+                </div>
+                <div className={`px-3 py-1 rounded-lg border text-xs font-mono 
+                    ${completed ? 'bg-green-500/20 text-green-400 border-green-500/30' : 'bg-white/5 text-gray-300 border-white/10'}`}>
+                    {completed ? 'Completed' : `+${xp} XP`}
+                </div>
+            </div>
+
+            {/* Progress Bar */}
+            <div className="relative h-1.5 bg-[#2A2D31] rounded-full overflow-hidden">
+                <div
+                    className={`absolute top-0 left-0 h-full transition-all duration-500 ${completed ? 'bg-green-500' : 'bg-[#8459E2]'}`}
+                    style={{ width: `${percent}%` }}
+                />
+            </div>
+            <div className="flex justify-between mt-1 text-[10px] text-gray-500 font-medium">
+                <span>{progress} / {target}</span>
+                <span>{percent}%</span>
             </div>
         </div>
     )

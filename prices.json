@@ -1,0 +1,12 @@
+[
+  {
+    "productName": "Premium Plan",
+    "priceId": "price_1SuAIVC1FHouzqEP7qmGQ0B9",
+    "amount": 1999
+  },
+  {
+    "productName": "Standard Plan",
+    "priceId": "price_1SuAIUC1FHouzqEPNqlqfMP0",
+    "amount": 999
+  }
+]

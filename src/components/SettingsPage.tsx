@@ -34,15 +34,269 @@ import {
     AlertCircle,
     Timer,
     FileKey,
-    Phone
+    Phone,
+    Sun
 } from 'lucide-react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
+
+// Define the shape of our settings matching the DB, plus UI defaults
+interface UserSettings {
+    notifications: {
+        email: boolean;
+        push: boolean;
+        marketing: boolean;
+        message_preview: boolean;
+    };
+    privacy: {
+        profile_visibility: string;
+        show_activity: boolean;
+        conversation_analysis: boolean;
+        conversation_history: boolean;
+        anonymous_analytics: boolean;
+        location_sharing: boolean;
+    };
+    theme: string;
+    appearance: {
+        font_size: string;
+        compact_mode: boolean;
+    };
+    audio: {
+        sound_effects: boolean;
+        vibration: boolean;
+    };
+    chat: {
+        auto_send: boolean;
+        typing_indicator: boolean;
+    };
+    security: {
+        biometric: boolean;
+        session_timeout: string;
+    };
+    data: {
+        auto_delete: boolean;
+        ai_training: boolean;
+    };
+    content: {
+        safe_mode: boolean;
+        couples_mode: boolean;
+    };
+}
+
+const defaultSettings: UserSettings = {
+    notifications: { email: true, push: true, marketing: false, message_preview: true },
+    privacy: { profile_visibility: 'private', show_activity: true, conversation_analysis: true, conversation_history: true, anonymous_analytics: false, location_sharing: false },
+    theme: 'dark',
+    appearance: { font_size: 'medium', compact_mode: true },
+    audio: { sound_effects: true, vibration: true },
+    chat: { auto_send: true, typing_indicator: true },
+    security: { biometric: true, session_timeout: '30m' },
+    data: { auto_delete: false, ai_training: false },
+    content: { safe_mode: true, couples_mode: false }
+};
 
 export default function SettingsPage() {
+    const { user } = useAuth();
     const [activeTab, setActiveTab] = useState('account');
+    const [loading, setLoading] = useState(true);
+    const [profile, setProfile] = useState<any>(null);
+    const [settings, setSettings] = useState<UserSettings>(defaultSettings);
+    const [openMenu, setOpenMenu] = useState<string | null>(null); // 'theme', 'language', or null
+
+    // Theme Helpers
+    const isDark = settings.theme === 'dark';
+    const styles = {
+        bg: isDark ? 'bg-[#0E1113]' : 'bg-gray-50',
+        card: isDark ? 'bg-[#1A1D21] border-white/5' : 'bg-white border-gray-200 shadow-sm',
+        text: isDark ? 'text-white' : 'text-gray-900',
+        subText: isDark ? 'text-gray-400' : 'text-gray-500',
+        border: isDark ? 'border-white/5' : 'border-gray-200',
+        input: isDark ? 'bg-[#0E1113] border-white/10 text-gray-400 focus:border-[#8459E2]' : 'bg-gray-50 border-gray-300 text-gray-900 focus:border-[#8459E2]',
+        button: isDark ? 'bg-[#2A2D31] text-gray-400 hover:bg-[#32363b]' : 'bg-gray-100 text-gray-600 hover:bg-gray-200',
+        navActive: isDark ? 'bg-[#2A2D31] text-white shadow-lg border border-white/5' : 'bg-white text-[#8459E2] shadow-lg border border-gray-200',
+        navInactive: isDark ? 'text-gray-500 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+    };
+
+    const [passwordForm, setPasswordForm] = useState({ current: '', new: '', confirm: '' });
+    const [passwordStatus, setPasswordStatus] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+    const [updatingPassword, setUpdatingPassword] = useState(false);
+
+    const [completedLessons, setCompletedLessons] = useState(0);
+
+    useEffect(() => {
+        if (user?.id) loadSettings();
+    }, [user?.id]);
+
+    const handleUpdatePassword = async () => {
+        setPasswordStatus(null);
+        if (!passwordForm.current || !passwordForm.new || !passwordForm.confirm) {
+            setPasswordStatus({ type: 'error', text: 'Please fill in all fields' });
+            return;
+        }
+        if (passwordForm.new !== passwordForm.confirm) {
+            setPasswordStatus({ type: 'error', text: 'New passwords do not match' });
+            return;
+        }
+        if (passwordForm.new.length < 6) {
+            setPasswordStatus({ type: 'error', text: 'Password must be at least 6 characters' });
+            return;
+        }
+
+        setUpdatingPassword(true);
+        try {
+            // 1. Verify current password by re-authenticating
+            if (!user?.email) throw new Error('User email not found');
+
+            const { error: signInError } = await supabase.auth.signInWithPassword({
+                email: user.email,
+                password: passwordForm.current
+            });
+
+            if (signInError) {
+                setPasswordStatus({ type: 'error', text: 'Incorrect current password' });
+                setUpdatingPassword(false);
+                return;
+            }
+
+            // 2. Update to new password
+            const { error: updateError } = await supabase.auth.updateUser({
+                password: passwordForm.new
+            });
+
+            if (updateError) throw updateError;
+
+            setPasswordStatus({ type: 'success', text: 'Password updated successfully!' });
+            setPasswordForm({ current: '', new: '', confirm: '' }); // Reset form
+        } catch (error: any) {
+            setPasswordStatus({ type: 'error', text: error.message });
+        } finally {
+            setUpdatingPassword(false);
+        }
+    };
+
+    const handleExportData = async () => {
+        if (!user) return;
+        try {
+            const dataToExport = {
+                profile,
+                settings,
+                completed_lessons_count: completedLessons,
+                exported_at: new Date().toISOString()
+            };
+
+            const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `noral-bond-data-${user.id.slice(0, 8)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            alert('Your data has been exported successfully.');
+        } catch (error) {
+            console.error('Export failed:', error);
+            alert('Failed to export data.');
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!confirm('Are you SURE you want to delete your account? This action cannot be undone.')) return;
+        if (!confirm('Please confirm again. All your data will be permanently lost.')) return;
+
+        try {
+            // In a real app, we would call a Supabase Edge Function to delete the user from auth.users
+            // For now, we can only update the profile to 'deleted' or sign them out as a safeguard
+            // or try to delete the profile row if RLS allows.
+
+            // Option 1: Mark as deleted (soft delete)
+            // await supabase.from('profiles').update({ status: 'deleted' }).eq('id', user?.id);
+
+            // Option 2: Just Sign Out with a message (Client-side usually can't delete Auth User)
+            await supabase.auth.signOut();
+            window.location.href = '/';
+
+        } catch (error) {
+            console.error('Delete failed:', error);
+        }
+    };
+
+    const loadSettings = async () => {
+        try {
+            // Fetch Profile
+            const { data, error } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', user?.id)
+                .maybeSingle();
+
+            if (data) {
+                setProfile(data);
+                // Merge default settings with loaded settings (deep merge would be better but simple spread for now)
+                if (data.settings) {
+                    // We do a shallow merge of categories to ensure new keys appear if missing in DB
+                    setSettings(prev => ({
+                        ...prev,
+                        ...data.settings,
+                        notifications: { ...prev.notifications, ...data.settings.notifications },
+                        privacy: { ...prev.privacy, ...data.settings.privacy },
+                        appearance: { ...prev.appearance, ...data.settings.appearance },
+                        audio: { ...prev.audio, ...data.settings.audio },
+                        chat: { ...prev.chat, ...data.settings.chat },
+                        security: { ...prev.security, ...data.settings.security },
+                        data: { ...prev.data, ...data.settings.data },
+                        content: { ...prev.content, ...data.settings.content },
+                    }));
+                }
+            }
+
+            // Fetch Completed Lessons Count
+            const { count, error: countError } = await supabase
+                .from('user_lesson_progress')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user?.id)
+                .eq('completed', true);
+
+            if (!countError) {
+                setCompletedLessons(count || 0);
+            }
+
+        } catch (error) {
+            console.error('Error loading settings:', error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const updateSetting = async (category: keyof UserSettings, key: string, value: any) => {
+        // 1. Optimistic Update
+        const newSettings = { ...settings };
+        // @ts-ignore
+        if (typeof newSettings[category] === 'object' && key) {
+            // @ts-ignore
+            newSettings[category] = { ...newSettings[category], [key]: value };
+        } else {
+            // @ts-ignore
+            newSettings[category] = value;
+        }
+
+        setSettings(newSettings);
+
+        // 2. Persist to DB
+        try {
+            await supabase
+                .from('profiles')
+                .update({ settings: newSettings })
+                .eq('id', user?.id);
+        } catch (error) {
+            console.error('Error saving settings:', error);
+        }
+    };
 
     return (
-        <div className="flex flex-col min-h-screen bg-[#0E1113] p-4 md:p-8 lg:p-12 overflow-y-auto">
+        <div className={`flex flex-col min-h-screen p-4 md:p-8 lg:p-12 overflow-y-auto ${styles.bg}`}>
             {/* Header */}
             <div className="text-center mb-10">
                 <h1 className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-[#C27AFF] to-[#EC4899] bg-clip-text text-transparent mb-3">
@@ -55,7 +309,7 @@ export default function SettingsPage() {
 
             <div className="max-w-4xl mx-auto w-full space-y-8">
                 {/* Tab Navigation */}
-                <div className="flex p-1 bg-[#1A1D21] border border-white/5 rounded-xl">
+                <div className="grid grid-cols-2 sm:flex p-1 bg-[#1A1D21] border border-white/5 rounded-xl gap-1 sm:gap-0">
                     {[
                         { id: 'account', label: 'Account', icon: User },
                         { id: 'privacy', label: 'Privacy', icon: Shield },
@@ -65,8 +319,10 @@ export default function SettingsPage() {
                         <button
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
-                            className={`flex-1 py-3 text-sm font-medium rounded-lg transition-all duration-200 flex items-center justify-center gap-2 ${activeTab === tab.id ? 'bg-[#2A2D31] text-white shadow-lg border border-white/5' : 'text-gray-500 hover:text-white'
-                                }`}
+                            className={`flex items-center justify-center gap-2 py-3 text-sm font-medium rounded-lg transition-all duration-200 ${activeTab === tab.id
+                                ? styles.navActive
+                                : styles.navInactive
+                                } sm:flex-1`}
                         >
                             <tab.icon className="w-4 h-4" />
                             {tab.label}
@@ -77,69 +333,83 @@ export default function SettingsPage() {
                 {activeTab === 'account' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Account Information */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <User className="w-5 h-5 text-[#8459E2]" />
-                                <h3 className="text-lg font-bold text-white">Account Information</h3>
+                                <h3 className={`text-lg font-bold ${styles.text}`}>Account Information</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Update your account details and contact information
                             </p>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-6">
                                 <div className="space-y-2">
-                                    <label className="text-sm font-bold text-white">Email</label>
+                                    <label className={`text-sm font-bold ${styles.text}`}>Email</label>
                                     <div className="relative">
                                         <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                                         <input
                                             type="email"
-                                            defaultValue="your@email.com"
-                                            className="w-full bg-[#0E1113] border border-white/10 rounded-lg py-3 pl-10 pr-4 text-gray-400 text-sm focus:outline-none focus:border-[#8459E2] transition-colors"
+                                            value={profile?.email || ''}
+                                            readOnly
+                                            className={`w-full rounded-lg py-3 pl-10 pr-4 text-sm focus:outline-none transition-colors cursor-not-allowed opacity-60 border ${styles.input}`}
                                         />
-                                        <EyeOff className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 cursor-pointer" />
                                     </div>
                                 </div>
                                 <div className="space-y-2">
-                                    <label className="text-sm font-bold text-white">Account Status</label>
+                                    <label className={`text-sm font-bold ${styles.text}`}>Account Status</label>
                                     <div className="flex gap-2 min-h-[46px] items-center">
                                         <span className="bg-[#8459E2]/10 border border-[#8459E2]/20 text-[#8459E2] text-[10px] uppercase font-bold px-3 py-1.5 rounded-full">
                                             Verified
                                         </span>
-                                        <span className="bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981] text-[10px] uppercase font-bold px-3 py-1.5 rounded-full">
-                                            Premium
-                                        </span>
+                                        {profile?.subscription_tier === 'premium' && (
+                                            <span className="bg-[#10B981]/10 border border-[#10B981]/20 text-[#10B981] text-[10px] uppercase font-bold px-3 py-1.5 rounded-full">
+                                                Premium
+                                            </span>
+                                        )}
+                                        {profile?.subscription_tier === 'standard' && (
+                                            <span className="bg-blue-500/10 border border-blue-500/20 text-blue-500 text-[10px] uppercase font-bold px-3 py-1.5 rounded-full">
+                                                Standard
+                                            </span>
+                                        )}
+                                        {(!profile?.subscription_tier || profile?.subscription_tier === 'free') && (
+                                            <span className="bg-gray-500/10 border border-gray-500/20 text-gray-500 text-[10px] uppercase font-bold px-3 py-1.5 rounded-full">
+                                                Free Plan
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
                             </div>
-
-                            <button className="px-6 py-2.5 rounded-lg bg-gradient-to-r from-[#C27AFF] to-[#EC4899] hover:opacity-90 text-white text-xs font-bold shadow-lg shadow-pink-500/20 transition-opacity">
-                                Save Change
-                            </button>
                         </div>
 
                         {/* Security Settings */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Shield className="w-5 h-5 text-[#8459E2]" />
-                                <h3 className="text-lg font-bold text-white">Security Settings</h3>
+                                <h3 className={`text-lg font-bold ${styles.text}`}>Security Settings</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Manage your password and security features
                             </p>
 
                             <div className="mb-8">
-                                <h4 className="text-sm font-bold text-white mb-4">Change Password</h4>
+                                <h4 className={`text-sm font-bold ${styles.text} mb-4`}>Change Password</h4>
+                                {passwordStatus && (
+                                    <div className={`mb-4 px-4 py-3 rounded-lg text-xs font-medium ${passwordStatus.type === 'success' ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                                        }`}>
+                                        {passwordStatus.text}
+                                    </div>
+                                )}
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                                     <div className="space-y-2">
                                         <label className="text-xs text-gray-400">Current Password</label>
                                         <div className="relative">
-                                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 opacity-0" /> {/* Spacer */}
                                             <input
                                                 type="password"
-                                                placeholder="your@email.com" // Placeholder matches screenshot though contextually weird for password
-                                                className="w-full bg-[#0E1113] border border-white/10 rounded-lg py-3 pl-4 pr-10 text-gray-400 text-sm focus:outline-none focus:border-[#8459E2] transition-colors"
+                                                value={passwordForm.current}
+                                                onChange={(e) => setPasswordForm({ ...passwordForm, current: e.target.value })}
+                                                placeholder="••••••••"
+                                                className={`w-full rounded-lg py-3 pl-4 pr-10 text-sm focus:outline-none transition-colors border ${styles.input}`}
                                             />
-                                            <EyeOff className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 cursor-pointer" />
                                         </div>
                                     </div>
                                     <div className="space-y-2">
@@ -147,10 +417,11 @@ export default function SettingsPage() {
                                         <div className="relative">
                                             <input
                                                 type="password"
-                                                placeholder="your@email.com"
-                                                className="w-full bg-[#0E1113] border border-white/10 rounded-lg py-3 pl-4 pr-10 text-gray-400 text-sm focus:outline-none focus:border-[#8459E2] transition-colors"
+                                                value={passwordForm.new}
+                                                onChange={(e) => setPasswordForm({ ...passwordForm, new: e.target.value })}
+                                                placeholder="••••••••"
+                                                className={`w-full rounded-lg py-3 pl-4 pr-10 text-sm focus:outline-none transition-colors border ${styles.input}`}
                                             />
-                                            <EyeOff className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 cursor-pointer" />
                                         </div>
                                     </div>
                                     <div className="space-y-2">
@@ -158,35 +429,24 @@ export default function SettingsPage() {
                                         <div className="relative">
                                             <input
                                                 type="password"
-                                                placeholder="your@email.com"
-                                                className="w-full bg-[#0E1113] border border-white/10 rounded-lg py-3 pl-4 pr-10 text-gray-400 text-sm focus:outline-none focus:border-[#8459E2] transition-colors"
+                                                value={passwordForm.confirm}
+                                                onChange={(e) => setPasswordForm({ ...passwordForm, confirm: e.target.value })}
+                                                placeholder="••••••••"
+                                                className={`w-full rounded-lg py-3 pl-4 pr-10 text-sm focus:outline-none transition-colors border ${styles.input}`}
                                             />
-                                            <EyeOff className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 cursor-pointer" />
                                         </div>
                                     </div>
                                 </div>
-                                <button className="px-6 py-2.5 rounded-lg border border-white/5 bg-[#2A2D31] text-gray-400 text-xs font-bold hover:bg-[#32363b] transition-colors">
-                                    Update Password
+                                <button
+                                    onClick={handleUpdatePassword}
+                                    disabled={updatingPassword}
+                                    className="px-6 py-2.5 rounded-lg border border-white/5 bg-[#2A2D31] text-gray-400 text-xs font-bold hover:bg-[#32363b] transition-colors disabled:opacity-50"
+                                >
+                                    {updatingPassword ? 'Updating...' : 'Update Password'}
                                 </button>
                             </div>
 
-                            <div>
-                                <h4 className="text-sm font-bold text-white mb-4">Two-Factor Authentication</h4>
-                                <div className="bg-[#0E1113] border border-white/5 rounded-lg p-4 flex items-center justify-between">
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-lg bg-green-400/10 flex items-center justify-center">
-                                            <Smartphone className="w-5 h-5 text-green-400" />
-                                        </div>
-                                        <div>
-                                            <div className="text-sm font-medium text-white">Authenticator App</div>
-                                            <div className="text-xs text-gray-500">Disable</div>
-                                        </div>
-                                    </div>
-                                    <button className="px-4 py-1.5 rounded bg-gradient-to-r from-[#EC4899] to-[#EC4899] hover:opacity-90 text-white text-[10px] font-bold shadow-lg shadow-pink-500/20">
-                                        Enable
-                                    </button>
-                                </div>
-                            </div>
+                            {/* 2FA Removed */}
                         </div>
                     </div>
                 )}
@@ -194,47 +454,56 @@ export default function SettingsPage() {
                 {activeTab === 'privacy' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Data Collection & Usage */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Database className="w-5 h-5 text-[#35DDFE]" />
-                                <h3 className="text-lg font-bold text-white">Data Collection & Usage</h3>
+                                <h3 className={`text-lg font-bold ${styles.text}`}>Data Collection & Usage</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Control how your data is collected and used to improve your experience
                             </p>
 
                             <div className="space-y-6">
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <div className="text-white font-medium mb-1">Conversation Analysis</div>
+                                        <div className={`${styles.text} font-medium mb-1`}>Conversation Analysis</div>
                                         <div className="text-xs text-gray-500">Allow AI to analyze conversations for personalization</div>
                                     </div>
-                                    <Toggle checked={true} />
+                                    <Toggle
+                                        checked={settings.privacy.conversation_analysis}
+                                        onClick={() => updateSetting('privacy', 'conversation_analysis', !settings.privacy.conversation_analysis)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <div className="text-white font-medium mb-1">Conversation History</div>
+                                        <div className={`${styles.text} font-medium mb-1`}>Conversation History</div>
                                         <div className="text-xs text-gray-500">Store conversation history for context and improvement</div>
                                     </div>
-                                    <Toggle checked={true} />
+                                    <Toggle
+                                        checked={settings.privacy.conversation_history}
+                                        onClick={() => updateSetting('privacy', 'conversation_history', !settings.privacy.conversation_history)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <div className="text-white font-medium mb-1">Anonymous Analytics</div>
+                                        <div className={`${styles.text} font-medium mb-1`}>Anonymous Analytics</div>
                                         <div className="text-xs text-gray-500">Share anonymous usage data to improve the app</div>
                                     </div>
-                                    <Toggle checked={false} />
+                                    <Toggle
+                                        checked={settings.privacy.anonymous_analytics}
+                                        onClick={() => updateSetting('privacy', 'anonymous_analytics', !settings.privacy.anonymous_analytics)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Privacy & Visibility */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Eye className="w-5 h-5 text-[#10B981]" />
                                 <h3 className="text-lg font-bold text-white">Privacy & Visibility</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Control who can see your profile and activity
                             </p>
 
@@ -242,10 +511,13 @@ export default function SettingsPage() {
                                 <div className="space-y-2">
                                     <label className="text-sm font-medium text-white">Profile Visibility</label>
                                     <div className="relative">
-                                        <button className="w-full flex items-center justify-between bg-[#0E1113] border border-white/10 rounded-lg px-4 py-3 text-sm text-gray-300">
+                                        <button
+                                            onClick={() => updateSetting('privacy', 'profile_visibility', settings.privacy.profile_visibility === 'public' ? 'private' : 'public')}
+                                            className="w-full flex items-center justify-between bg-[#0E1113] border border-white/10 rounded-lg px-4 py-3 text-sm text-gray-300"
+                                        >
                                             <div className="flex items-center gap-2">
                                                 <User className="w-4 h-4 text-gray-500" />
-                                                Private - Only You
+                                                {settings.privacy.profile_visibility === 'public' ? 'Public' : 'Private - Only You'}
                                             </div>
                                             <ChevronDown className="w-4 h-4 text-gray-500" />
                                         </button>
@@ -256,52 +528,23 @@ export default function SettingsPage() {
                                         <div className="text-white font-medium mb-1">Location Sharing</div>
                                         <div className="text-xs text-gray-500">Share general location for better recommendations</div>
                                     </div>
-                                    <Toggle checked={false} />
+                                    <Toggle
+                                        checked={settings.privacy.location_sharing}
+                                        onClick={() => updateSetting('privacy', 'location_sharing', !settings.privacy.location_sharing)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
-                        {/* Security Settings (Biometric) */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
-                            <div className="flex items-center gap-3 mb-2">
-                                <Shield className="w-5 h-5 text-[#EC4899]" />
-                                <h3 className="text-lg font-bold text-white">Security Settings</h3>
-                            </div>
-                            <p className="text-gray-400 text-sm mb-6">
-                                Protect your account with advanced security features
-                            </p>
-
-                            <div className="space-y-8">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <div className="text-white font-medium mb-1">Biometric Authentication</div>
-                                        <div className="text-xs text-gray-500">Use Fingerprint or Face ID to secure app access</div>
-                                    </div>
-                                    <Toggle checked={true} color="bg-[#8459E2]" />
-                                </div>
-
-                                <div className="space-y-2">
-                                    <div className="text-[10px] font-bold text-gray-400 uppercase">Session Timeout: 30 Minutes</div>
-                                    <div className="relative h-2 bg-[#2A2D31] rounded-full">
-                                        <div className="absolute left-0 top-0 h-full w-1/4 bg-[#8459E2] rounded-full" />
-                                        <div className="absolute left-1/4 top-1/2 -translate-y-1/2 w-4 h-4 bg-[#8459E2] border-2 border-[#1A1D21] rounded-full shadow-lg cursor-pointer" />
-                                    </div>
-                                    <div className="flex justify-between text-[10px] text-gray-500 font-medium">
-                                        <span>5 min</span>
-                                        <span>55 min</span>
-                                        <span>2 hrs</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        {/* Security Settings Removed */}
 
                         {/* Data Management */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Database className="w-5 h-5 text-[#35DDFE]" />
                                 <h3 className="text-lg font-bold text-white">Data Management</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Manage your stored data and conversation history
                             </p>
 
@@ -311,15 +554,24 @@ export default function SettingsPage() {
                                         <div className="text-white font-medium mb-1">Auto-Delete Messages</div>
                                         <div className="text-xs text-gray-500">Automatically delete old conversations</div>
                                     </div>
-                                    <Toggle checked={false} />
+                                    <Toggle
+                                        checked={settings.data.auto_delete}
+                                        onClick={() => updateSetting('data', 'auto_delete', !settings.data.auto_delete)}
+                                    />
                                 </div>
 
                                 <div className="flex gap-4">
-                                    <button className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-white/10 text-white text-xs font-bold hover:bg-white/5 transition-colors">
+                                    <button
+                                        onClick={handleExportData}
+                                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-white/10 text-white text-xs font-bold hover:bg-white/5 transition-colors"
+                                    >
                                         <Download className="w-4 h-4" />
                                         Export My Data
                                     </button>
-                                    <button className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-[#EF4444] text-white text-xs font-bold hover:bg-[#DC2626] transition-colors shadow-lg shadow-red-500/20">
+                                    <button
+                                        onClick={handleDeleteAccount}
+                                        className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-[#EF4444] text-white text-xs font-bold hover:bg-[#DC2626] transition-colors shadow-lg shadow-red-500/20"
+                                    >
                                         <Trash2 className="w-4 h-4" />
                                         Delete Account
                                     </button>
@@ -364,69 +616,95 @@ export default function SettingsPage() {
                 {activeTab === 'preferences' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Appearance */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Palette className="w-5 h-5 text-[#35DDFE]" />
-                                <h3 className="text-lg font-bold text-white">Appearance</h3>
+                                <h3 className={`text-lg font-bold ${styles.text}`}>Appearance</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Customize the look and feel of your app
                             </p>
 
                             <div className="space-y-6">
-                                <div className="space-y-2">
-                                    <label className="text-sm font-medium text-white">Theme</label>
+                                <div className="space-y-2 relative">
+                                    <label className={`text-sm font-medium ${styles.text}`}>Theme</label>
                                     <div className="relative">
-                                        <button className="w-full flex items-center justify-between bg-[#0E1113] border border-white/10 rounded-lg px-4 py-3 text-sm text-gray-300">
+                                        <button
+                                            onClick={() => setOpenMenu(openMenu === 'theme' ? null : 'theme')}
+                                            className={`w-full flex items-center justify-between border rounded-lg px-4 py-3 text-sm hover:border-[#8459E2] transition-colors ${styles.input}`}
+                                        >
                                             <div className="flex items-center gap-2">
-                                                <Moon className="w-4 h-4 text-gray-500" />
-                                                Dark
+                                                {settings.theme === 'dark' ? <Moon className="w-4 h-4 text-gray-500" /> : <Sun className="w-4 h-4 text-yellow-500" />}
+                                                {settings.theme.charAt(0).toUpperCase() + settings.theme.slice(1)}
                                             </div>
-                                            <ChevronDown className="w-4 h-4 text-gray-500" />
+                                            <ChevronDown className={`w-4 h-4 text-gray-500 transition-transform ${openMenu === 'theme' ? 'rotate-180' : ''}`} />
                                         </button>
+
+                                        {/* Dropdown Menu */}
+                                        {openMenu === 'theme' && (
+                                            <div className={`absolute top-full left-0 right-0 mt-2 rounded-lg border shadow-xl z-50 overflow-hidden ${isDark ? 'bg-[#1A1D21] border-white/10' : 'bg-white border-gray-200'}`}>
+                                                {['dark', 'light'].map((themeOption) => (
+                                                    <button
+                                                        key={themeOption}
+                                                        onClick={() => {
+                                                            updateSetting('theme', '', themeOption);
+                                                            setOpenMenu(null);
+                                                        }}
+                                                        className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-colors ${isDark ? 'hover:bg-[#2A2D31] text-gray-300' : 'hover:bg-gray-50 text-gray-700'
+                                                            }`}
+                                                    >
+                                                        {themeOption === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4 text-yellow-500" />}
+                                                        {themeOption.charAt(0).toUpperCase() + themeOption.slice(1)}
+                                                        {settings.theme === themeOption && <Check className="w-4 h-4 ml-auto text-[#8459E2]" />}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
+                                { /* Language Removed */}
                                 <div className="space-y-2">
-                                    <label className="text-sm font-medium text-white">Language</label>
-                                    <div className="relative">
-                                        <button className="w-full flex items-center justify-between bg-[#0E1113] border border-white/10 rounded-lg px-4 py-3 text-sm text-gray-300">
-                                            <div className="flex items-center gap-2">
-                                                <Globe className="w-4 h-4 text-gray-500" />
-                                                English
-                                            </div>
-                                            <ChevronDown className="w-4 h-4 text-gray-500" />
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <div className="text-[10px] font-bold text-gray-400 uppercase">Font Size: Med</div>
-                                    <div className="relative h-2 bg-[#2A2D31] rounded-full">
-                                        <div className="absolute left-0 top-0 h-full w-1/2 bg-[#8459E2] rounded-full" />
-                                        <div className="absolute left-1/2 top-1/2 -translate-y-1/2 w-4 h-4 bg-[#8459E2] border-2 border-[#1A1D21] rounded-full shadow-lg cursor-pointer" />
-                                    </div>
-                                    <div className="flex justify-between text-[10px] text-gray-500 font-medium">
-                                        <span>Small</span>
-                                        <span>Medium</span>
-                                        <span>Large</span>
+                                    <div className="text-[10px] font-bold text-gray-400 uppercase">Font Size: {settings.appearance.font_size}</div>
+                                    <div className="flex items-center gap-2 bg-[#2A2D31] rounded-full p-1 relative">
+                                        {/* Slider Background */}
+                                        <div className="absolute left-1 right-1 h-2 bg-[#1A1D21] rounded-full z-0 top-1/2 -translate-y-1/2"></div>
+
+                                        {/* Active Indicator (approximate position based on selection) */}
+
+                                        {['small', 'medium', 'large'].map((size) => (
+                                            <button
+                                                key={size}
+                                                onClick={() => updateSetting('appearance', 'font_size', size)}
+                                                className={`relative z-10 flex-1 h-6 rounded-full text-[10px] font-medium transition-all duration-200 ${settings.appearance.font_size === size
+                                                    ? 'bg-[#8459E2] text-white shadow-lg'
+                                                    : 'text-gray-500 hover:text-gray-300'
+                                                    }`}
+                                            >
+                                                {size.charAt(0).toUpperCase() + size.slice(1)}
+                                            </button>
+                                        ))}
                                     </div>
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
-                                        <div className="text-white font-medium mb-1">Compact Mode</div>
+                                        <div className={`${styles.text} font-medium mb-1`}>Compact Mode</div>
                                         <div className="text-xs text-gray-500">Reduce spacing for more content on screen</div>
                                     </div>
-                                    <Toggle checked={true} />
+                                    <Toggle
+                                        checked={settings.appearance.compact_mode}
+                                        onClick={() => updateSetting('appearance', 'compact_mode', !settings.appearance.compact_mode)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Notifications */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Bell className="w-5 h-5 text-[#10B981]" />
                                 <h3 className="text-lg font-bold text-white">Notifications</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Control when and how you receive notifications
                             </p>
 
@@ -436,39 +714,55 @@ export default function SettingsPage() {
                                         <div className="text-white font-medium mb-1">Enable Notifications</div>
                                         <div className="text-xs text-gray-500">Receive notifications for messages and updates</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.notifications.push}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('notifications', 'push', !settings.notifications.push)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Push Notifications</div>
                                         <div className="text-xs text-gray-500">Instant notifications on your device</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.notifications.push}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('notifications', 'push', !settings.notifications.push)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Email Notifications</div>
                                         <div className="text-xs text-gray-500">Important updates via email</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.notifications.email}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('notifications', 'email', !settings.notifications.email)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Message Preview</div>
                                         <div className="text-xs text-gray-500">Show message content in notifications</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.notifications.message_preview}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('notifications', 'message_preview', !settings.notifications.message_preview)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Audio & Haptics */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Volume2 className="w-5 h-5 text-[#10B981]" /> {/* Using green as in screenshot */}
                                 <h3 className="text-lg font-bold text-white">Audio & Haptics</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Configure sound and vibration settings
                             </p>
 
@@ -478,25 +772,33 @@ export default function SettingsPage() {
                                         <div className="text-white font-medium mb-1">Sound Effects</div>
                                         <div className="text-xs text-gray-500">Play sounds for messages and interactions</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.audio.sound_effects}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('audio', 'sound_effects', !settings.audio.sound_effects)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Vibration</div>
                                         <div className="text-xs text-gray-500">Haptic feedback for interactions</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.audio.vibration}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('audio', 'vibration', !settings.audio.vibration)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Chat Preferences */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <MessageCircle className="w-5 h-5 text-[#10B981]" /> {/* Using green/icon from screenshot */}
                                 <h3 className="text-lg font-bold text-white">Chat Preferences</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Customize your conversation experience
                             </p>
 
@@ -506,25 +808,33 @@ export default function SettingsPage() {
                                         <div className="text-white font-medium mb-1">Auto-send with Enter</div>
                                         <div className="text-xs text-gray-500">Send messages when pressing Enter key</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.chat.auto_send}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('chat', 'auto_send', !settings.chat.auto_send)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Typing Indicator</div>
                                         <div className="text-xs text-gray-500">Show when AI companion is responding</div>
                                     </div>
-                                    <Toggle checked={true} color="bg-white/20" />
+                                    <Toggle
+                                        checked={settings.chat.typing_indicator}
+                                        color="bg-white/20"
+                                        onClick={() => updateSetting('chat', 'typing_indicator', !settings.chat.typing_indicator)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Reset Preferences */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <RefreshCw className="w-4 h-4 text-[#10B981]" />
                                 <h3 className="text-lg font-bold text-white">Reset Preferences</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Restore all preferences to their default values
                             </p>
                             <button className="w-full py-3 rounded-lg bg-[#2A2D31] text-gray-400 text-sm font-medium hover:bg-[#32363b] transition-colors">
@@ -553,12 +863,12 @@ export default function SettingsPage() {
                 {activeTab === 'consent' && (
                     <div className="space-y-6 animate-fade-in">
                         {/* Consent & Safety Banner */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-4">
                                 <Shield className="w-5 h-5 text-green-500" />
                                 <h3 className="text-lg font-bold text-white">Consent & Safety</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Your safety and consent are our highest priorities. You have complete control over your experience.
                             </p>
 
@@ -583,12 +893,12 @@ export default function SettingsPage() {
                         </div>
 
                         {/* Content Preferences */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <FileText className="w-5 h-5 text-[#8459E2]" />
                                 <h3 className="text-lg font-bold text-white">Content Preferences</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Control the type of content and interactions you're comfortable with
                             </p>
 
@@ -601,25 +911,31 @@ export default function SettingsPage() {
                                         </div>
                                         <div className="text-xs text-gray-500">Restrict content to emotional support and gentle conversation only</div>
                                     </div>
-                                    <Toggle checked={true} />
+                                    <Toggle
+                                        checked={settings.content.safe_mode}
+                                        onClick={() => updateSetting('content', 'safe_mode', !settings.content.safe_mode)}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                         <div className="text-white font-medium mb-1">Couples Mode</div>
                                         <div className="text-xs text-gray-500">Enable shared experiences for couples</div>
                                     </div>
-                                    <Toggle checked={false} />
+                                    <Toggle
+                                        checked={settings.content.couples_mode}
+                                        onClick={() => updateSetting('content', 'couples_mode', !settings.content.couples_mode)}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* Safe Words & Emergency Controls */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <AlertCircle className="w-5 h-5 text-[#F59E0B]" />
                                 <h3 className="text-lg font-bold text-white">Safe Words & Emergency Controls</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Configure words that immediately stop any interaction
                             </p>
 
@@ -664,12 +980,12 @@ export default function SettingsPage() {
                         </div>
 
                         {/* Session Management */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <Timer className="w-5 h-5 text-[#35DDFE]" />
                                 <h3 className="text-lg font-bold text-white">Session Management</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Set healthy limits for your interactions
                             </p>
 
@@ -683,12 +999,12 @@ export default function SettingsPage() {
                         </div>
 
                         {/* Data Processing Consent */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <FileKey className="w-5 h-5 text-[#35DDFE]" />
                                 <h3 className="text-lg font-bold text-white">Data Processing Consent</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Manage how your data is used to improve your experience
                             </p>
 
@@ -697,7 +1013,10 @@ export default function SettingsPage() {
                                     <div className="text-white font-medium mb-1">Data Processing for AI Improvement</div>
                                     <div className="text-xs text-gray-500">Allow anonymized conversation data to improve AI responses</div>
                                 </div>
-                                <Toggle checked={false} />
+                                <Toggle
+                                    checked={settings.data.ai_training}
+                                    onClick={() => updateSetting('data', 'ai_training', !settings.data.ai_training)}
+                                />
                             </div>
 
                             <div className="bg-[#10B981]/10 border border-[#10B981]/20 rounded-lg p-4">
@@ -708,12 +1027,12 @@ export default function SettingsPage() {
                         </div>
 
                         {/* Emergency Actions */}
-                        <div className="bg-[#1A1D21] border border-white/5 rounded-xl p-6 md:p-8">
+                        <div className={`rounded-xl p-6 md:p-8 border ${styles.card}`}>
                             <div className="flex items-center gap-3 mb-2">
                                 <AlertTriangle className="w-5 h-5 text-[#EF4444]" />
                                 <h3 className="text-lg font-bold text-white">Emergency Actions</h3>
                             </div>
-                            <p className="text-gray-400 text-sm mb-6">
+                            <p className={`${styles.subText} text-sm mb-6`}>
                                 Quick options if you need immediate help or want to stop
                             </p>
 
@@ -752,24 +1071,23 @@ export default function SettingsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <StatsCard
                         icon={<MessageCircle className="w-5 h-5 text-[#8459E2]" />}
-                        value="127"
+                        value={profile?.conversations_count || 0}
                         label="Messages"
                     />
                     <StatsCard
                         icon={<User className="w-5 h-5 text-[#35DDFE]" />}
-                        value="23"
+                        value={profile?.days_active || 0}
                         label="Days Active"
                     />
                     <StatsCard
                         icon={<BookOpen className="w-5 h-5 text-[#F59E0B]" />}
-                        value="8"
+                        value={completedLessons}
                         label="Lessons"
                     />
                     <StatsCard
                         icon={<Heart className="w-5 h-5 text-[#EC4899]" />}
-                        value="25%"
-                        label="73%"
-                        labelClass="text-gray-400"
+                        value={profile?.bond_score || 0}
+                        label="Bond Score"
                     />
                 </div>
             </div>

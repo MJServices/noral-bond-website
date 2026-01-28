@@ -11,29 +11,35 @@ import {
   Sparkles,
   Crown
 } from 'lucide-react';
+import { useXP } from '@/hooks/useXP';
 
 interface SidebarProps {
   onComingSoon?: () => void;
   activeItem?: string;
   onNavigate?: (item: string) => void;
-  isOpen?: boolean;
-  onClose?: () => void;
 }
 
-export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate, isOpen = false, onClose }: SidebarProps = {}) {
-  // const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // Controlled by parent now
+export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate }: SidebarProps = {}) {
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { stats } = useXP();
 
   const handleClick = (itemId: string) => {
     if (onNavigate) {
       onNavigate(itemId);
     }
-    if (onClose) onClose(); // Close mobile menu when item is clicked
+    setIsMobileMenuOpen(false); // Close mobile menu when item is clicked
 
     // Handle admin panel navigation
     if (itemId === 'admin') {
       window.open('/admin', '_blank');
       return;
     }
+
+    // if (itemId === 'pricing') {
+    //   // Navigate to the separate pricing page
+    //   window.location.href = '/pricing';
+    //   return;
+    // }
 
     // Only trigger coming soon if it's not a handled route
     if (onComingSoon && !['home', 'chat', 'profile', 'achievements', 'library', 'settings'].includes(itemId)) {
@@ -42,19 +48,7 @@ export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate,
   };
 
   const toggleMobileMenu = () => {
-    if (onClose) {
-      if (isOpen) onClose();
-      // Note: Toggle logic usually requires a parent handler, but for now we only support closing from here or strictly using onClose.
-      // If we want toggle, we need onToggle prop. But Navbar handles opening. 
-      // Let's assume this button is only for closing or toggling if we lift state properly.
-      // Actually, the previous button was "toggle". 
-      // If isOpen is true, we want to close. If false (shouldn't be visible if hidden?), we want to open.
-      // The mobile menu button inside Sidebar is ONLY visible when mobile. 
-      // Wait, the mobile button at line 109 previously toggled it. Now Navbar handles opening.
-      // So we might REMOVE the mobile toggle button from Sidebar entirely if Navbar replaces it?
-      // Let's keep it for now but make it call onClose if open.
-      onClose();
-    }
+    setIsMobileMenuOpen(!isMobileMenuOpen);
   };
 
   const sidebarItems = [
@@ -110,26 +104,30 @@ export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate,
           })}
         </nav>
 
-        {/* Bottom Profile - Gold Crown with "Lv.12" */}
+        {/* Bottom Profile - Gold Crown with real Level */}
         <div className="mt-auto mb-6 flex flex-col items-center gap-1">
           <div className="w-10 h-10 bg-[#D4AF37]/20 rounded-full flex items-center justify-center border border-[#D4AF37]/30">
             <Crown className="text-[#D4AF37] w-5 h-5" strokeWidth={1.5} />
           </div>
-          <span className="text-[#9CA3AF] text[10px] font-medium tracking-wide">Lv.12</span>
+          <span className="text-[#9CA3AF] text-[10px] font-medium tracking-wide">Lv.{stats.level}</span>
         </div>
       </div>
 
-      {/* Mobile Menu Button - REMOVED or kept? The Navbar will have a menu button. 
-          If we keep this, it will duplicate. Let's hide it if Navbar is present. 
-          Actually, let's remove it because the new Navbar has the hamburger. */}
+      {/* Mobile Menu Button - Only visible on mobile */}
+      <button
+        onClick={toggleMobileMenu}
+        className="fixed top-4 left-4 z-[60] md:hidden w-10 h-10 bg-gradient-to-r from-[#8459E2] to-[#EC4899] rounded-lg flex items-center justify-center hover:opacity-90 transition-opacity"
+      >
+        <Sparkles className="text-white w-6 h-6" />
+      </button>
 
       {/* Mobile Sidebar Overlay */}
-      {isOpen && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[55] md:hidden" onClick={onClose} />
+      {isMobileMenuOpen && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[55] md:hidden" onClick={toggleMobileMenu} />
       )}
 
       {/* Mobile Sidebar - Slide in from left */}
-      <div className={`fixed left-0 top-0 h-full w-64 bg-[#0E1113] border-r border-white/5 flex flex-col py-6 z-[60] md:hidden transform transition-transform duration-300 ${isOpen ? 'translate-x-0' : '-translate-x-full'
+      <div className={`fixed left-0 top-0 h-full w-64 bg-[#0E1113] border-r border-white/5 flex flex-col py-6 z-[60] md:hidden transform transition-transform duration-300 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
         {/* Mobile Header */}
         <div className="flex items-center justify-between px-6 mb-8">
@@ -140,7 +138,7 @@ export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate,
             <span className="text-white font-semibold text-lg">AI Companion</span>
           </div>
           <button
-            onClick={onClose}
+            onClick={toggleMobileMenu}
             className="text-white/60 hover:text-white"
           >
             <span className="text-2xl">×</span>
@@ -176,8 +174,8 @@ export default function Sidebar({ onComingSoon, activeItem = 'home', onNavigate,
               <Crown className="text-[#D4AF37] w-5 h-5" strokeWidth={1.5} />
             </div>
             <div>
-              <div className="text-white font-semibold text-sm">Level 12</div>
-              <div className="text-[#D4AF37] text-xs">Premium User</div>
+              <div className="text-white font-semibold text-sm">Level {stats.level}</div>
+              <div className="text-[#D4AF37] text-xs">XP: {stats.xp}</div>
             </div>
           </div>
         </div>

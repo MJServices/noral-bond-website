@@ -10,7 +10,8 @@ import {
     Image as ImageIcon,
     Send,
     AlertTriangle,
-    RefreshCw
+    RefreshCw,
+    Video
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -23,7 +24,7 @@ type Message = {
 };
 
 export default function ChatInterface() {
-    const { user } = useAuth();
+    const { user, profile } = useAuth();
     const [message, setMessage] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [bondScore, setBondScore] = useState(0);
@@ -59,7 +60,8 @@ export default function ChatInterface() {
                 .from('user_settings')
                 .select('selected_personality_id')
                 .eq('user_id', user.id)
-                .single();
+                .eq('user_id', user.id)
+                .maybeSingle(); // Use maybeSingle() to avoid 406 error if row is missing
 
             if (settingsData && settingsData.selected_personality_id) {
                 const name = personalities[settingsData.selected_personality_id];
@@ -71,7 +73,7 @@ export default function ChatInterface() {
                 .from('profiles')
                 .select('bond_score')
                 .eq('id', user.id)
-                .single();
+                .maybeSingle();
 
             if (profileData) setBondScore(profileData.bond_score || 0);
 
@@ -151,6 +153,24 @@ export default function ChatInterface() {
     const handleSendMessage = async () => {
         if (!message.trim() || !user || isSending) return;
 
+        // Check Daily Limit for Free Plan
+        if (profile?.subscription_tier === 'free' || !profile?.subscription_tier) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            const { count, error } = await supabase
+                .from('messages')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user.id)
+                .eq('role', 'user')
+                .gte('created_at', today.toISOString());
+
+            if (count && count >= 20) {
+                alert('You have reached your daily limit of 20 messages. Please upgrade to Standard for unlimited chatting.');
+                return;
+            }
+        }
+
         setIsSending(true);
         const content = message.trim();
         setMessage(''); // Clear input immediately
@@ -211,6 +231,75 @@ export default function ChatInterface() {
             if (error?.hint) console.error('Error hint:', error.hint);
         } finally {
             setIsSending(false);
+        }
+    };
+
+    const handleVideoGeneration = async () => {
+        if (!user || !profile) return;
+
+        // Determine limit
+        let limit = 0; // Default/Free (Not allowed)
+        if (profile.subscription_tier === 'standard') limit = 20;
+        if (profile.subscription_tier === 'premium') limit = -1; // Unlimited
+
+        if (limit === 0) {
+            alert('Video generation is not available on the Free plan. Please upgrade to Standard or Premium to create videos.');
+            return;
+        }
+
+        try {
+            const { data, error } = await supabase.rpc('increment_feature_usage', {
+                p_user_id: user.id,
+                p_feature_type: 'video', // Must match SQL function logic
+                p_limit: limit
+            });
+
+            if (error) throw error;
+
+            if (data && data.allowed === false) {
+                alert(`You have reached your daily video generation limit (${limit}/day). Please upgrade to Premium for unlimited videos.`);
+                return;
+            }
+
+            // If allowed, proceed
+            alert(`Video generation started! (Usage: ${data.current_count}/${limit === -1 ? 'Unlimited' : limit})`);
+            // TODO: Call actual video generation API
+
+        } catch (error) {
+            console.error('Error checking usage limits:', error);
+            alert('Failed to start video generation. Please try again.');
+        }
+    };
+
+    const handleImageGeneration = async () => {
+        if (!user || !profile) return;
+
+        // Determine limit based on tier
+        let limit = 5; // Default/Free
+        if (profile.subscription_tier === 'standard') limit = 50;
+        if (profile.subscription_tier === 'premium') limit = -1; // Unlimited
+
+        try {
+            const { data, error } = await supabase.rpc('increment_feature_usage', {
+                p_user_id: user.id,
+                p_feature_type: 'image',
+                p_limit: limit
+            });
+
+            if (error) throw error;
+
+            if (data && data.allowed === false) {
+                alert(`You have reached your daily image generation limit (${limit}/day). Please upgrade your plan for more.`);
+                return;
+            }
+
+            // If allowed, proceed with generation (Stub for now)
+            alert(`Image generation started! (Usage: ${data.current_count}/${limit === -1 ? 'Unlimited' : limit})`);
+            // TODO: Call actual image generation API here
+
+        } catch (error) {
+            console.error('Error checking usage limits:', error);
+            alert('Failed to start image generation. Please try again.');
         }
     };
 
@@ -367,7 +456,16 @@ export default function ChatInterface() {
                             <button className="hover:text-white transition-colors">
                                 <Mic className="w-5 h-5" />
                             </button>
-                            <button className="hover:text-white transition-colors">
+                            <button
+                                className="hover:text-white transition-colors"
+                                onClick={handleVideoGeneration}
+                            >
+                                <Video className="w-5 h-5" />
+                            </button>
+                            <button
+                                className="hover:text-white transition-colors"
+                                onClick={handleImageGeneration}
+                            >
                                 <ImageIcon className="w-5 h-5" />
                             </button>
                         </div>
@@ -410,6 +508,6 @@ export default function ChatInterface() {
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 }

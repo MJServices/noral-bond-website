@@ -57,6 +57,13 @@ export default function ProfilePage() {
         async function fetchData() {
             setLoading(true);
             try {
+                // 0. Check Daily Activity (Streak)
+                try {
+                    await supabase.rpc('check_daily_activity');
+                } catch (rpcError) {
+                    console.error('Error updating daily activity:', rpcError);
+                    // Continue fetching profile even if stats fail
+                }
 
                 // 1. Fetch User Profile
                 const { data: profileDataResponse, error: profileError } = await supabase
@@ -77,12 +84,15 @@ export default function ProfilePage() {
                         age: profile.age || 0,
                         location: profile.location || 'Global',
                         bio: profile.bio || 'Exploring meaningful connections...',
-                        member_since: new Date(profile.member_since).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+                        member_since: profile.created_at ? new Date(profile.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : 'Just now',
                         conversations_count: profile.conversations_count || 0,
-                        days_active: profile.days_active || 0,
+                        days_active: profile.days_active || 1, // Default to 1 if 0/null
                         level: profile.level || 1,
                         bond_score: profile.bond_score || 0
                     });
+                } else {
+                    // Handle case where profile completely missing (e.g. error) or empty
+                    setProfileData(prev => ({ ...prev, days_active: 1 }));
                 }
 
                 // 2. Fetch User Settings
@@ -121,24 +131,32 @@ export default function ProfilePage() {
     const handleSaveProfile = async () => {
         if (!user) return;
         try {
-            const { error } = await supabase
+            const { data, error } = await supabase
                 .from('profiles')
-                .update({
+                .upsert({
+                    id: user.id,
                     full_name: editData.full_name,
                     age: editData.age,
                     location: editData.location,
-                    bio: editData.bio
+                    bio: editData.bio,
+                    updated_at: new Date().toISOString()
                 })
-                .eq('id', user.id);
+                .select();
 
             if (error) throw error;
+
+            // If RLS blocks the update, Supabase often returns no error but empty data
+            if (!data || data.length === 0) {
+                throw new Error("RLS blocked the update (0 rows affected).");
+            }
 
             // Update local state
             setProfileData({ ...profileData, ...editData });
             setIsEditing(false);
-        } catch (error) {
+            alert("Profile updated successfully!");
+        } catch (error: any) {
             console.error('Error saving profile:', error);
-            // Optionally add error toast here
+            alert(`Failed to save profile: ${error.message || error.details || 'Unknown error'}`);
         }
     };
 
@@ -153,8 +171,10 @@ export default function ProfilePage() {
         try {
             const { error } = await supabase
                 .from('user_settings')
-                .update({ [column]: value })
-                .eq('user_id', user.id);
+                .upsert({
+                    user_id: user.id,
+                    [column]: value
+                }, { onConflict: 'user_id' }); // Merge update
 
             if (error) throw error;
         } catch (err) {
