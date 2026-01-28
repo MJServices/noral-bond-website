@@ -95,19 +95,13 @@ export default function ProfilePage() {
                     setProfileData(prev => ({ ...prev, days_active: 1 }));
                 }
 
+                // 2. User Settings are already in profile.settings (fetched above)
                 if (profile && profile.settings) {
                     const s = profile.settings;
-                    // Handle nested personality settings
-                    if (s.personality) {
-                        setSelectedPersonality(s.personality.id || 'caring-guardian');
-                        setRelationshipType(s.personality.relationship_type || 'switch');
-                    }
-
-                    // Handle existing content settings
-                    if (s.content) {
-                        setSafeMode(s.content.safe_mode ?? true);
-                        setCoupleMode(s.content.couples_mode ?? false);
-                    }
+                    setSelectedPersonality(s.selected_personality_id || 'caring-guardian');
+                    setRelationshipType(s.relationship_type || s.preferred_role || 'switch');
+                    setSafeMode(s.safe_mode ?? true);
+                    setCoupleMode(s.couple_mode ?? false);
                 }
             } catch (error) {
                 console.error('Unexpected error in fetchData:', error);
@@ -161,7 +155,7 @@ export default function ProfilePage() {
     };
 
     // Save Settings Helpers
-    const updateSetting = async (category: string, key: string, value: any) => {
+    const updateSetting = async (key: string, value: any) => {
         if (!user) return;
         try {
             // Fetch current settings first to merge
@@ -172,13 +166,7 @@ export default function ProfilePage() {
                 .single();
 
             const currentSettings = profile?.settings || {};
-
-            // Create updated settings object
-            const updatedSettings = { ...currentSettings };
-
-            // Handle nested updates
-            if (!updatedSettings[category]) updatedSettings[category] = {};
-            updatedSettings[category] = { ...updatedSettings[category], [key]: value };
+            const updatedSettings = { ...currentSettings, [key]: value };
 
             const { error } = await supabase
                 .from('profiles')
@@ -189,30 +177,36 @@ export default function ProfilePage() {
                 .eq('id', user.id);
 
             if (error) throw error;
-        } catch (err) {
-            console.error(`Error updating ${category}.${key}:`, err);
+        } catch (err: any) {
+            console.error(`Error updating ${key}:`, err);
+            // Debugging "Failed to fetch"
+            console.log('Supabase Config Check:', {
+                urlPresent: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+                urlPrefix: process.env.NEXT_PUBLIC_SUPABASE_URL?.substring(0, 8),
+                keyPresent: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+            });
         }
     };
 
     // Handlers with auto-save
     const handlePersonalityChange = (id: string) => {
         setSelectedPersonality(id);
-        updateSetting('personality', 'id', id);
+        updateSetting('selected_personality_id', id);
     };
 
     const handleRelationshipChange = (type: string) => {
         setRelationshipType(type);
-        updateSetting('personality', 'relationship_type', type);
+        updateSetting('relationship_type', type);
     };
 
     const handleSafeModeChange = (val: boolean) => {
         setSafeMode(val);
-        updateSetting('content', 'safe_mode', val);
+        updateSetting('safe_mode', val);
     };
 
     const handleCoupleModeChange = (val: boolean) => {
         setCoupleMode(val);
-        updateSetting('content', 'couples_mode', val);
+        updateSetting('couple_mode', val);
     };
 
     const personalities = [
@@ -616,21 +610,31 @@ export default function ProfilePage() {
                                 Control your safety settings and privacy preferences.
                             </p>
 
-                            <div className="space-y-6">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h4 className="text-white font-medium mb-1">Safe Mode</h4>
-                                        <p className="text-xs text-gray-500">Restrict content to emotional support and general conversation</p>
+                            <div className="space-y-4">
+                                <div
+                                    onClick={() => handleSafeModeChange(!safeMode)}
+                                    className="flex items-center justify-between py-2 px-3 -mx-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group"
+                                >
+                                    <div className="pr-4">
+                                        <h4 className="text-white font-medium mb-0.5 text-sm">Safe Mode</h4>
+                                        <p className="text-[11px] text-gray-500 group-hover:text-gray-400 transition-colors leading-tight">Restrict content to emotional support and general conversation</p>
                                     </div>
-                                    <Toggle checked={safeMode} onChange={handleSafeModeChange} />
+                                    <div className={`shrink-0 w-9 h-5 rounded-full relative transition-colors duration-200 ${safeMode ? 'bg-[#8459E2]' : 'bg-white/10'}`}>
+                                        <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${safeMode ? 'translate-x-4' : ''}`} />
+                                    </div>
                                 </div>
 
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h4 className="text-white font-medium mb-1">Couple Mode</h4>
-                                        <p className="text-xs text-gray-500">Enable shared AI assistant for couples</p>
+                                <div
+                                    onClick={() => handleCoupleModeChange(!coupleMode)}
+                                    className="flex items-center justify-between py-2 px-3 -mx-3 rounded-xl hover:bg-white/5 transition-colors cursor-pointer group"
+                                >
+                                    <div className="pr-4">
+                                        <h4 className="text-white font-medium mb-0.5 text-sm">Couple Mode</h4>
+                                        <p className="text-[11px] text-gray-500 group-hover:text-gray-400 transition-colors leading-tight">Enable shared AI assistant for couples</p>
                                     </div>
-                                    <Toggle checked={coupleMode} onChange={handleCoupleModeChange} />
+                                    <div className={`shrink-0 w-9 h-5 rounded-full relative transition-colors duration-200 ${coupleMode ? 'bg-[#8459E2]' : 'bg-white/10'}`}>
+                                        <div className={`absolute top-1 left-1 w-3 h-3 bg-white rounded-full transition-transform duration-200 ${coupleMode ? 'translate-x-4' : ''}`} />
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -706,19 +710,4 @@ function DynamicOption({ id, label, description, icon, color, selected, onClick 
             )}
         </button>
     )
-}
-
-function Toggle({ checked, onChange }: { checked: boolean, onChange: (v: boolean) => void }) {
-    return (
-        <button
-            onClick={() => onChange(!checked)}
-            className={`w-14 h-8 rounded-full transition-colors duration-200 ease-in-out relative flex-shrink-0 ${checked ? 'bg-[#8459E2]' : 'bg-[#2A2D31]'
-                }`}
-        >
-            <div
-                className={`absolute top-1 w-6 h-6 rounded-full bg-white transition-transform duration-200 shadow-sm ${checked ? 'translate-x-[28px]' : 'translate-x-1'
-                    }`}
-            />
-        </button>
-    );
 }

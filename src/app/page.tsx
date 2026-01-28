@@ -58,15 +58,20 @@ export default function Home() {
         body: JSON.stringify({ priceId, priceName }),
       });
 
-      const { url } = await res.json();
-      if (url) {
-        window.location.href = url;
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Checkout failed');
+      }
+
+      if (data.url) {
+        window.location.href = data.url;
       } else {
         throw new Error('No checkout URL returned');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Checkout failed', error);
-      alert('Checkout failed. Please try again.');
+      alert(`Checkout failed: ${error.message}`);
     } finally {
       setCheckoutLoading(null);
     }
@@ -375,8 +380,8 @@ export default function Home() {
                       <p className="text-sm md:text-base text-[#D0D0D0]">USD / year</p>
                     </div>
                     <button
-                      onClick={() => handleCheckout('price_1SuAIUC1FHouzqEPNqlqfMP0', 'Standard')}
-                      disabled={checkoutLoading === 'price_1SuAIUC1FHouzqEPNqlqfMP0' || profile?.subscription_tier === 'standard'}
+                      onClick={() => handleCheckout('price_1SuZjtC1FHouzqEPg2Ib5JIH', 'Standard')}
+                      disabled={checkoutLoading === 'price_1SuZjtC1FHouzqEPg2Ib5JIH' || profile?.subscription_tier === 'standard'}
                       className={`w-full py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 transition-opacity text-sm md:text-base disabled:opacity-50 ${profile?.subscription_tier === 'standard'
                         ? 'bg-white/10 text-white/50 cursor-default'
                         : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
@@ -384,7 +389,7 @@ export default function Home() {
                     >
                       {profile?.subscription_tier === 'standard'
                         ? 'Current Plan'
-                        : checkoutLoading === 'price_1SuAIUC1FHouzqEPNqlqfMP0' ? 'Processing...' : 'Choose Standard'}
+                        : checkoutLoading === 'price_1SuZjtC1FHouzqEPg2Ib5JIH' ? 'Processing...' : 'Choose Standard'}
                     </button>
                     <ul className="space-y-2 md:space-y-3 text-sm md:text-base text-[#D0D0D0]">
                       <li className="flex items-center gap-3">
@@ -430,16 +435,16 @@ export default function Home() {
                       <p className="text-sm md:text-base text-[#D0D0D0]">USD / year</p>
                     </div>
                     <button
-                      onClick={() => handleCheckout('price_1SuAIVC1FHouzqEP7qmGQ0B9', 'Premium')}
-                      disabled={checkoutLoading === 'price_1SuAIVC1FHouzqEP7qmGQ0B9' || profile?.subscription_tier === 'premium'}
+                      onClick={() => handleCheckout('price_1SuZjuC1FHouzqEPLlsvybrn', 'Premium')}
+                      disabled={checkoutLoading === 'price_1SuZjuC1FHouzqEPLlsvybrn' || profile?.subscription_tier === 'premium'}
                       className={`w-full py-2.5 md:py-3 rounded-lg font-semibold mb-4 md:mb-6 transition-opacity text-sm md:text-base disabled:opacity-50 ${profile?.subscription_tier === 'premium'
-                          ? 'bg-white/10 text-white/50 cursor-default'
-                          : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
+                        ? 'bg-white/10 text-white/50 cursor-default'
+                        : 'bg-gradient-to-r from-[#8459E2] to-[#EC4899] text-white hover:opacity-90'
                         }`}
                     >
                       {profile?.subscription_tier === 'premium'
                         ? 'Current Plan'
-                        : checkoutLoading === 'price_1SuAIVC1FHouzqEP7qmGQ0B9' ? 'Processing...' : 'Choose Premium'}
+                        : checkoutLoading === 'price_1SuZjuC1FHouzqEPLlsvybrn' ? 'Processing...' : 'Choose Premium'}
                     </button>
                     <ul className="space-y-2 md:space-y-3 text-sm md:text-base text-[#D0D0D0]">
                       <li className="flex items-center gap-3">

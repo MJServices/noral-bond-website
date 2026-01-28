@@ -17,11 +17,11 @@ export async function POST(req: NextRequest) {
 
         if (authError) {
             console.error("Auth Error:", authError);
-            return new NextResponse('Auth Error', { status: 401 });
+            return NextResponse.json({ error: 'Authentication Error' }, { status: 401 });
         }
 
         if (!user) {
-            return new NextResponse('Unauthorized', { status: 401 });
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         const { priceId, priceName } = await req.json();
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
 
         return NextResponse.json({ sessionId: session.id, url: session.url });
     } catch (err: any) {
-        console.error(err);
-        return new NextResponse('Internal Error', { status: 500 });
+        console.error('Checkout Error:', err);
+        return NextResponse.json({ error: err.message || 'Internal Server Error' }, { status: 500 });
     }
 }
