@@ -55,27 +55,25 @@ export default function ChatInterface() {
         if (!user) return;
         setIsLoading(true);
         try {
-            // Fetch User Settings for Personality
-            const { data: settingsData } = await supabase
-                .from('user_settings')
-                .select('selected_personality_id')
-                .eq('user_id', user.id)
-                .eq('user_id', user.id)
-                .maybeSingle(); // Use maybeSingle() to avoid 406 error if row is missing
-
-            if (settingsData && settingsData.selected_personality_id) {
-                const name = personalities[settingsData.selected_personality_id];
-                if (name) setPersonality(name);
-            }
-
-            // Fetch Bond Score from Profiles
+            // Fetch Settings from Profiles table (JSONB)
             const { data: profileData } = await supabase
                 .from('profiles')
-                .select('bond_score')
+                .select('settings, bond_score')
                 .eq('id', user.id)
                 .maybeSingle();
 
-            if (profileData) setBondScore(profileData.bond_score || 0);
+            if (profileData) {
+                // Set Bond Score
+                setBondScore(profileData.bond_score || 0);
+
+                // Set Personality
+                if (profileData.settings && profileData.settings.personality) {
+                    const pid = profileData.settings.personality.id;
+                    if (pid && personalities[pid]) {
+                        setPersonality(personalities[pid]);
+                    }
+                }
+            }
 
             // Fetch Messages
             const { data: messagesData, error: messagesError } = await supabase

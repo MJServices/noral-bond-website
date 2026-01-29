@@ -95,24 +95,19 @@ export default function ProfilePage() {
                     setProfileData(prev => ({ ...prev, days_active: 1 }));
                 }
 
-                // 2. Fetch User Settings
-                const { data: settingsResponse, error: settingsError } = await supabase
-                    .from('user_settings')
-                    .select('*')
-                    .eq('user_id', user!.id)
-                    .limit(1);
+                if (profile && profile.settings) {
+                    const s = profile.settings;
+                    // Handle nested personality settings
+                    if (s.personality) {
+                        setSelectedPersonality(s.personality.id || 'caring-guardian');
+                        setRelationshipType(s.personality.relationship_type || 'switch');
+                    }
 
-                if (settingsError) {
-                    console.error('Error fetching settings:', settingsError);
-                }
-
-                const settings = settingsResponse?.[0];
-
-                if (settings) {
-                    setSelectedPersonality(settings.selected_personality_id || 'caring-guardian');
-                    setRelationshipType(settings.preferred_role || settings.relationship_type || 'switch');
-                    setSafeMode(settings.safe_mode ?? true);
-                    setCoupleMode(settings.couple_mode ?? false);
+                    // Handle existing content settings
+                    if (s.content) {
+                        setSafeMode(s.content.safe_mode ?? true);
+                        setCoupleMode(s.content.couples_mode ?? false);
+                    }
                 }
             } catch (error) {
                 console.error('Unexpected error in fetchData:', error);
@@ -166,41 +161,58 @@ export default function ProfilePage() {
     };
 
     // Save Settings Helpers
-    const updateSetting = async (column: string, value: any) => {
+    const updateSetting = async (category: string, key: string, value: any) => {
         if (!user) return;
         try {
+            // Fetch current settings first to merge
+            const { data: profile } = await supabase
+                .from('profiles')
+                .select('settings')
+                .eq('id', user.id)
+                .single();
+
+            const currentSettings = profile?.settings || {};
+
+            // Create updated settings object
+            const updatedSettings = { ...currentSettings };
+
+            // Handle nested updates
+            if (!updatedSettings[category]) updatedSettings[category] = {};
+            updatedSettings[category] = { ...updatedSettings[category], [key]: value };
+
             const { error } = await supabase
-                .from('user_settings')
-                .upsert({
-                    user_id: user.id,
-                    [column]: value
-                }, { onConflict: 'user_id' }); // Merge update
+                .from('profiles')
+                .update({
+                    settings: updatedSettings,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', user.id);
 
             if (error) throw error;
         } catch (err) {
-            console.error(`Error updating ${column}:`, err);
+            console.error(`Error updating ${category}.${key}:`, err);
         }
     };
 
     // Handlers with auto-save
     const handlePersonalityChange = (id: string) => {
         setSelectedPersonality(id);
-        updateSetting('selected_personality_id', id);
+        updateSetting('personality', 'id', id);
     };
 
     const handleRelationshipChange = (type: string) => {
         setRelationshipType(type);
-        updateSetting('relationship_type', type);
+        updateSetting('personality', 'relationship_type', type);
     };
 
     const handleSafeModeChange = (val: boolean) => {
         setSafeMode(val);
-        updateSetting('safe_mode', val);
+        updateSetting('content', 'safe_mode', val);
     };
 
     const handleCoupleModeChange = (val: boolean) => {
         setCoupleMode(val);
-        updateSetting('couple_mode', val);
+        updateSetting('content', 'couples_mode', val);
     };
 
     const personalities = [

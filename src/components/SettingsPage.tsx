@@ -82,6 +82,10 @@ interface UserSettings {
         safe_mode: boolean;
         couples_mode: boolean;
     };
+    personality?: {
+        id: string;
+        relationship_type: string;
+    };
 }
 
 const defaultSettings: UserSettings = {
